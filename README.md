@@ -33,24 +33,24 @@ bin\livekit-server.exe --config livekit.yaml --dev --bind 0.0.0.0
 # Terminal 2 - Flux backend
 pnpm dev:server
 
-# Terminal 3 - Flux frontend
-pnpm dev:client
+# Terminal 3 - Flux desktop app
+pnpm dev:electron
 ```
 
-Open http://localhost:5173, register an account, create a server, and you're in.
+The Flux desktop app will open. Register an account, create a server, and you're in.
 
 ---
 
 ## Host a Server for Friends (Remote Access)
 
-To let a friend on a different network join your server, you need two things:
+Your friend clones the repo, runs the app locally, and connects to your backend. Voice chat goes through LiveKit Cloud — no UDP port forwarding needed.
 
-1. **[ngrok](https://ngrok.com/)** - tunnels your web app to a public URL (free)
-2. **[LiveKit Cloud](https://cloud.livekit.io/)** - handles voice chat networking (free tier)
+### What You (Host) Need
+
+1. **Port forward TCP port 3001** on your router to your PC's local IP
+2. **[LiveKit Cloud](https://cloud.livekit.io/)** account (free tier) for voice chat
 
 ### Step 1: Set Up LiveKit Cloud
-
-LiveKit Cloud handles all the WebRTC/UDP complexity so you don't need to forward ports.
 
 1. Go to https://cloud.livekit.io/ and create a free account
 2. Create a new project
@@ -64,35 +64,52 @@ LiveKit Cloud handles all the WebRTC/UDP complexity so you don't need to forward
 
 With LiveKit Cloud, you do **NOT** need to run `livekit-server.exe` locally.
 
-### Step 2: Set Up ngrok
+### Step 2: Port Forward & Start the Server
 
-ngrok gives your local Flux app a public HTTPS URL. The Vite dev server proxies all API and WebSocket traffic to the backend, so one tunnel is all you need.
-
-1. Install ngrok: https://ngrok.com/download
-2. Sign up and authenticate: `ngrok config add-authtoken YOUR_TOKEN`
-3. Start the Flux backend and frontend as usual (Terminals 2 and 3 from Quick Start)
-4. In a new terminal, start the tunnel:
+1. Log into your router and forward **TCP port 3001** to your PC's local IP address
+2. Find your public IP (search "what is my ip")
+3. Start the backend:
    ```bash
-   ngrok http 5173
+   pnpm dev:server
    ```
-5. ngrok will show a public URL like `https://abc123.ngrok-free.app`
-6. Share that URL with your friend
+4. Launch the desktop app:
+   ```bash
+   pnpm dev:electron
+   ```
 
 ### Step 3: Your Friend Joins
 
-Your friend just needs a browser:
+Your friend needs [Node.js](https://nodejs.org/) v20+ and [pnpm](https://pnpm.io/) v9+. Then:
 
-1. Open the ngrok URL you shared
-2. Register a new account
-3. You share your server's invite code (click the server icon to see it)
-4. They join via the invite code
-5. Click a voice channel and hit "Join Voice Channel"
+```bash
+# 1. Clone the repo
+git clone https://github.com/NoahSmiley/chatapp.git
+cd chatapp
+
+# 2. Install and build
+pnpm install
+pnpm build:shared
+
+# 3. Launch the app (replace YOUR_FRIENDS_IP with your public IP)
+set BACKEND_URL=http://YOUR_FRIENDS_IP:3001 && pnpm dev:electron
+```
+
+On Mac/Linux, use `export` instead of `set`:
+```bash
+BACKEND_URL=http://YOUR_FRIENDS_IP:3001 pnpm dev:electron
+```
+
+The desktop app will open. Your friend:
+1. Registers a new account
+2. You share your server's invite code (click the server icon to see it)
+3. They join via the invite code
+4. Click a voice channel and hit "Join Voice Channel"
 
 ### Troubleshooting
 
-- **ngrok "Visit Site" interstitial**: Free ngrok shows a warning page on first visit. Your friend clicks through it once.
 - **Voice not connecting**: Make sure you updated `.env` with LiveKit Cloud credentials and restarted the server (`pnpm dev:server`).
-- **WebSocket disconnects**: If the ngrok tunnel restarts, the URL changes. Share the new URL.
+- **Can't reach backend**: Verify port 3001 is forwarded on your router and your firewall allows it.
+- **App won't start**: Make sure you ran `pnpm build:shared` before launching.
 
 ---
 
@@ -103,14 +120,14 @@ flux/
   packages/
     shared/     # Types, constants, validators
     server/     # Fastify backend + WebSocket gateway
-    client/     # React frontend (Vite)
+    client/     # Electron + React desktop app (Vite)
   bin/          # LiveKit server binary (not committed)
   livekit.yaml  # LiveKit local dev config
 ```
 
 ## Tech Stack
 
-- **Frontend:** React + TypeScript + Zustand
+- **Desktop:** Electron + React + TypeScript + Zustand
 - **Backend:** Fastify + SQLite + Better Auth + Drizzle ORM
 - **Voice:** LiveKit (self-hosted or cloud SFU)
 - **Real-time:** WebSocket via @fastify/websocket
@@ -126,3 +143,9 @@ See `packages/server/.env.example`:
 | `LIVEKIT_API_KEY` | `devkey` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | `secret` | LiveKit API secret |
 | `LIVEKIT_URL` | `ws://localhost:7880` | LiveKit WebSocket URL |
+
+**Client environment variables** (set before running `pnpm dev:electron`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BACKEND_URL` | `http://localhost:3001` | Backend server URL (set to host's public IP for remote play) |

@@ -1,0 +1,24 @@
+{
+  "name": "flux",
+  "private": true,
+  "version": "0.1.0",
+  "description": "E2E encrypted voice, text, and screen sharing app",
+  "scripts": {
+    "dev:server": "pnpm --filter @flux/server dev",
+    "dev:client": "pnpm --filter @flux/client dev",
+    "build:shared": "pnpm --filter @flux/shared build",
+    "build:server": "pnpm --filter @flux/server build",
+    "build:client": "pnpm --filter @flux/client build",
+    "build": "pnpm build:shared && pnpm build:server && pnpm build:client",
+    "db:generate": "pnpm --filter @flux/server db:generate",
+    "db:migrate": "pnpm --filter @flux/server db:migrate",
+    "dev:livekit": "bin\\livekit-server.exe --config livekit.yaml --dev --bind 0.0.0.0",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron", "esbuild", "better-sqlite3"]
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

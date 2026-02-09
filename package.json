@@ -6,6 +6,7 @@
   "scripts": {
     "dev:server": "pnpm --filter @flux/server dev",
     "dev:client": "pnpm --filter @flux/client dev",
+    "dev:electron": "pnpm --filter @flux/client dev:electron",
     "build:shared": "pnpm --filter @flux/shared build",
     "build:server": "pnpm --filter @flux/server build",
     "build:client": "pnpm --filter @flux/client build",

@@ -2,11 +2,10 @@
   "name": "@flux/client",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "main": "dist/electron/main.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && node electron-dev.js\"",
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",

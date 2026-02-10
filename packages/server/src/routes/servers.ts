@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { servers, channels, memberships } from "../db/schema.js";
+import { servers, channels, memberships, users } from "../db/schema.js";
 import { nanoid } from "nanoid";
 import { validateServerName, validateChannelName } from "@flux/shared";
 import type { CreateServerRequest, CreateChannelRequest, UpdateChannelRequest } from "@flux/shared";
@@ -252,9 +252,18 @@ export async function serverRoutes(app: FastifyInstance) {
 
     if (!membership) return reply.status(403).send({ error: "Not a member of this server" });
 
-    return db
-      .select()
+    const result = await db
+      .select({
+        userId: memberships.userId,
+        serverId: memberships.serverId,
+        role: memberships.role,
+        joinedAt: memberships.joinedAt,
+        username: users.username,
+      })
       .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
       .where(eq(memberships.serverId, serverId));
+
+    return result;
   });
 }

@@ -140,6 +140,64 @@ export const messages = sqliteTable(
   ]
 );
 
+// ── Reactions ──
+
+export const reactions = sqliteTable(
+  "reactions",
+  {
+    id: id(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: ts("created_at"),
+  },
+  (table) => [
+    index("idx_reactions_message").on(table.messageId),
+  ]
+);
+
+// ── Direct Messages ──
+
+export const dmChannels = sqliteTable(
+  "dm_channels",
+  {
+    id: id(),
+    user1Id: text("user1_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    user2Id: text("user2_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: ts("created_at"),
+  },
+  (table) => [
+    index("idx_dm_channels_users").on(table.user1Id, table.user2Id),
+  ]
+);
+
+export const dmMessages = sqliteTable(
+  "dm_messages",
+  {
+    id: id(),
+    dmChannelId: text("dm_channel_id")
+      .notNull()
+      .references(() => dmChannels.id, { onDelete: "cascade" }),
+    senderId: text("sender_id")
+      .notNull()
+      .references(() => users.id),
+    ciphertext: text("ciphertext").notNull(),
+    mlsEpoch: integer("mls_epoch").notNull().default(0),
+    createdAt: ts("created_at"),
+  },
+  (table) => [
+    index("idx_dm_messages_channel_time").on(table.dmChannelId, table.createdAt),
+  ]
+);
+
 // ── Memberships ──
 
 export const memberships = sqliteTable(

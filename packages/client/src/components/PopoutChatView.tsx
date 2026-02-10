@@ -1,6 +1,24 @@
-import { useState, useRef, useEffect, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent, type ReactNode } from "react";
 import type { Message } from "@flux/shared";
 import { onStateUpdate, sendCommand, type ChatStateMessage, type StateMessage } from "../lib/broadcast.js";
+
+const URL_REGEX = /https?:\/\/[^\s<]+/g;
+
+function renderMessageContent(text: string): ReactNode[] {
+  const segments: ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  URL_REGEX.lastIndex = 0;
+  while ((m = URL_REGEX.exec(text)) !== null) {
+    if (m.index > lastIndex) segments.push(text.slice(lastIndex, m.index));
+    segments.push(
+      <a key={m.index} href={m[0]} target="_blank" rel="noopener noreferrer">{m[0]}</a>
+    );
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < text.length) segments.push(text.slice(lastIndex));
+  return segments.length > 0 ? segments : [text];
+}
 
 export function PopoutChatView() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -17,7 +35,6 @@ export function PopoutChatView() {
       }
     };
     const cleanup = onStateUpdate(handleState);
-    // Request initial state from main window
     sendCommand({ type: "request-state" });
     return cleanup;
   }, []);
@@ -55,7 +72,7 @@ export function PopoutChatView() {
                 {new Date(msg.createdAt).toLocaleTimeString()}
               </span>
             </div>
-            <div className="message-body">{decodeContent(msg.ciphertext)}</div>
+            <div className="message-body">{renderMessageContent(decodeContent(msg.ciphertext))}</div>
           </div>
         ))}
         <div ref={messagesEndRef} />

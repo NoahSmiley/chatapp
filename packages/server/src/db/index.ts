@@ -1,5 +1,5 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
+import Database, { type Database as BetterSqlite3Database } from "better-sqlite3";
 import * as schema from "./schema.js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = process.env.DATABASE_PATH ?? path.resolve(__dirname, "../../flux.db");
 
-const sqlite = new Database(dbPath);
+const sqlite: BetterSqlite3Database = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
 
@@ -111,6 +111,34 @@ sqlite.exec(`
     joined_at TEXT NOT NULL,
     PRIMARY KEY (user_id, server_id)
   );
+
+  CREATE TABLE IF NOT EXISTS "reactions" (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES "messages"(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
+
+  CREATE TABLE IF NOT EXISTS "dm_channels" (
+    id TEXT PRIMARY KEY,
+    user1_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    user2_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_dm_channels_users ON dm_channels(user1_id, user2_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_channels_pair ON dm_channels(user1_id, user2_id);
+
+  CREATE TABLE IF NOT EXISTS "dm_messages" (
+    id TEXT PRIMARY KEY,
+    dm_channel_id TEXT NOT NULL REFERENCES "dm_channels"(id) ON DELETE CASCADE,
+    sender_id TEXT NOT NULL REFERENCES "user"(id),
+    ciphertext TEXT NOT NULL,
+    mls_epoch INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_dm_messages_channel_time ON dm_messages(dm_channel_id, created_at);
 `);
 
 // Add bitrate column if missing (migration for existing databases)
@@ -120,6 +148,16 @@ try {
   // Column already exists
 }
 
-export { sqlite };
+// Full-text search index for messages
+sqlite.exec(`
+  CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    message_id,
+    plaintext,
+    content='',
+    tokenize='porter unicode61'
+  );
+`);
+
+export { sqlite }; export type { BetterSqlite3Database };
 export const db = drizzle(sqlite, { schema });
 export type Database = typeof db;

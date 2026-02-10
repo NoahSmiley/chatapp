@@ -7,14 +7,18 @@ import { ChannelSidebar } from "../components/ChannelSidebar.js";
 import { ChatView } from "../components/ChatView.js";
 import { VoiceChannelView } from "../components/VoiceChannelView.js";
 import { ScreenSharePicker } from "../components/ScreenSharePicker.js";
+import { DMSidebar } from "../components/DMSidebar.js";
+import { DMChatView } from "../components/DMChatView.js";
+import { requestNotificationPermission } from "../lib/notifications.js";
 
 export function MainLayout() {
-  const { loadServers, activeServerId, activeChannelId, channels } = useChatStore();
+  const { loadServers, activeServerId, activeChannelId, channels, showingDMs, activeDMChannelId } = useChatStore();
   const { logout, user } = useAuthStore();
 
   useEffect(() => {
     gateway.connect();
     loadServers();
+    requestNotificationPermission();
     return () => gateway.disconnect();
   }, [loadServers]);
 
@@ -24,10 +28,23 @@ export function MainLayout() {
     <div className="app-layout">
       <ServerSidebar />
 
-      {activeServerId && <ChannelSidebar />}
+      {showingDMs ? (
+        <DMSidebar />
+      ) : (
+        activeServerId && <ChannelSidebar />
+      )}
 
       <main className="main-content">
-        {activeChannelId ? (
+        {showingDMs ? (
+          activeDMChannelId ? (
+            <DMChatView />
+          ) : (
+            <div className="empty-state">
+              <h2>Direct Messages</h2>
+              <p>Select a conversation or start a new one</p>
+            </div>
+          )
+        ) : activeChannelId ? (
           activeChannel?.type === "voice" ? (
             <VoiceChannelView />
           ) : (

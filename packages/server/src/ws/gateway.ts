@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket, RawData } from "ws";
-import { db } from "../db/index.js";
-import { messages } from "../db/schema.js";
+import { eq, and, or } from "drizzle-orm";
+import { db, sqlite } from "../db/index.js";
+import { messages, reactions, dmChannels, dmMessages } from "../db/schema.js";
 import { validateMessageContent } from "@flux/shared";
 import type { WSClientEvent, WSServerEvent } from "@flux/shared";
 import { auth } from "../auth.js";
@@ -12,24 +13,32 @@ interface ConnectedClient {
   userId: string;
   username: string;
   subscribedChannels: Set<string>;
+  subscribedDMs: Set<string>;
   voiceChannelId: string | null;
 }
 
 const clients = new Map<WebSocket, ConnectedClient>();
-
-// Channel -> Set of WebSocket connections
 const channelSubscriptions = new Map<string, Set<WebSocket>>();
-
-// Voice channel occupancy: channelId -> Map<userId, username>
+const dmSubscriptions = new Map<string, Set<WebSocket>>();
 const voiceParticipants = new Map<string, Map<string, string>>();
 
 function broadcast(channelId: string, event: WSServerEvent, exclude?: WebSocket) {
   const subs = channelSubscriptions.get(channelId);
   if (!subs) return;
-
   const data = JSON.stringify(event);
   for (const ws of subs) {
     if (ws !== exclude && ws.readyState === ws.OPEN) {
+      ws.send(data);
+    }
+  }
+}
+
+function broadcastDM(dmChannelId: string, event: WSServerEvent) {
+  const subs = dmSubscriptions.get(dmChannelId);
+  if (!subs) return;
+  const data = JSON.stringify(event);
+  for (const ws of subs) {
+    if (ws.readyState === ws.OPEN) {
       ws.send(data);
     }
   }
@@ -71,32 +80,31 @@ function broadcastVoiceState(channelId: string) {
   const users = participants
     ? Array.from(participants.entries()).map(([userId, username]) => ({ userId, username }))
     : [];
-
-  const event: WSServerEvent = {
-    type: "voice_state",
-    channelId,
-    participants: users,
-  };
-
-  // Broadcast to ALL connected clients (sidebar needs this regardless of channel subscription)
-  broadcastAll(event);
+  broadcastAll({ type: "voice_state", channelId, participants: users });
 }
 
 function sendCurrentVoiceStates(ws: WebSocket) {
   for (const [channelId, participants] of voiceParticipants) {
     const users = Array.from(participants.entries()).map(([userId, username]) => ({ userId, username }));
-    const event: WSServerEvent = {
-      type: "voice_state",
-      channelId,
-      participants: users,
-    };
-    ws.send(JSON.stringify(event));
+    ws.send(JSON.stringify({ type: "voice_state", channelId, participants: users }));
   }
 }
 
+function sendOnlineUsers(ws: WebSocket) {
+  const onlineUserIds = new Set<string>();
+  for (const [, client] of clients) {
+    onlineUserIds.add(client.userId);
+  }
+  for (const userId of onlineUserIds) {
+    ws.send(JSON.stringify({ type: "presence", userId, status: "online" } satisfies WSServerEvent));
+  }
+}
+
+// Prepared statement for FTS indexing
+const ftsInsert = sqlite.prepare(`INSERT INTO messages_fts(message_id, plaintext) VALUES (?, ?)`);
+
 export async function registerGateway(app: FastifyInstance) {
   app.get("/gateway", { websocket: true }, async (socket, request) => {
-    // Authenticate the WebSocket connection
     const session = await auth.api.getSession({
       headers: toWebHeaders(request.headers),
     });
@@ -113,15 +121,14 @@ export async function registerGateway(app: FastifyInstance) {
       userId: user.id,
       username: user.username,
       subscribedChannels: new Set(),
+      subscribedDMs: new Set(),
       voiceChannelId: null,
     };
     clients.set(socket, client);
 
-    // Announce presence
     broadcastPresence(user.id, "online");
-
-    // Send current voice states so sidebar populates immediately
     sendCurrentVoiceStates(socket);
+    sendOnlineUsers(socket);
 
     socket.on("message", async (raw: RawData) => {
       try {
@@ -133,7 +140,6 @@ export async function registerGateway(app: FastifyInstance) {
     });
 
     socket.on("close", () => {
-      // Unsubscribe from all channels
       for (const channelId of client.subscribedChannels) {
         const subs = channelSubscriptions.get(channelId);
         if (subs) {
@@ -141,13 +147,17 @@ export async function registerGateway(app: FastifyInstance) {
           if (subs.size === 0) channelSubscriptions.delete(channelId);
         }
       }
-
-      // Clean up voice state
+      for (const dmId of client.subscribedDMs) {
+        const subs = dmSubscriptions.get(dmId);
+        if (subs) {
+          subs.delete(socket);
+          if (subs.size === 0) dmSubscriptions.delete(dmId);
+        }
+      }
       if (client.voiceChannelId) {
         removeFromVoiceChannel(client.voiceChannelId, client.userId);
         broadcastVoiceState(client.voiceChannelId);
       }
-
       clients.delete(socket);
       broadcastPresence(user.id, "offline");
     });
@@ -159,10 +169,7 @@ async function handleClientEvent(client: ConnectedClient, event: WSClientEvent) 
     case "join_channel": {
       client.subscribedChannels.add(event.channelId);
       let subs = channelSubscriptions.get(event.channelId);
-      if (!subs) {
-        subs = new Set();
-        channelSubscriptions.set(event.channelId, subs);
-      }
+      if (!subs) { subs = new Set(); channelSubscriptions.set(event.channelId, subs); }
       subs.add(client.ws);
       break;
     }
@@ -170,80 +177,138 @@ async function handleClientEvent(client: ConnectedClient, event: WSClientEvent) 
     case "leave_channel": {
       client.subscribedChannels.delete(event.channelId);
       const subs = channelSubscriptions.get(event.channelId);
-      if (subs) {
-        subs.delete(client.ws);
-        if (subs.size === 0) channelSubscriptions.delete(event.channelId);
-      }
+      if (subs) { subs.delete(client.ws); if (subs.size === 0) channelSubscriptions.delete(event.channelId); }
       break;
     }
 
     case "send_message": {
       const error = validateMessageContent(event.ciphertext);
-      if (error) {
-        sendError(client.ws, error);
-        return;
-      }
+      if (error) { sendError(client.ws, error); return; }
 
-      const [message] = await db
-        .insert(messages)
-        .values({
-          channelId: event.channelId,
-          senderId: client.userId,
-          ciphertext: event.ciphertext,
-          mlsEpoch: event.mlsEpoch,
-        })
-        .returning();
+      const [message] = await db.insert(messages).values({
+        channelId: event.channelId,
+        senderId: client.userId,
+        ciphertext: event.ciphertext,
+        mlsEpoch: event.mlsEpoch,
+      }).returning();
+
+      // Index in FTS
+      try {
+        const plaintext = Buffer.from(event.ciphertext, "base64").toString("utf-8");
+        ftsInsert.run(message.id, plaintext);
+      } catch { /* non-critical */ }
 
       broadcast(event.channelId, {
         type: "message",
         message: {
-          id: message.id,
-          channelId: message.channelId,
-          senderId: message.senderId,
-          ciphertext: message.ciphertext,
-          mlsEpoch: message.mlsEpoch,
-          createdAt: message.createdAt,
+          id: message.id, channelId: message.channelId, senderId: message.senderId,
+          ciphertext: message.ciphertext, mlsEpoch: message.mlsEpoch, createdAt: message.createdAt,
         },
       });
       break;
     }
 
     case "typing_start": {
-      broadcast(
-        event.channelId,
-        { type: "typing", channelId: event.channelId, userId: client.userId, active: true },
-        client.ws
-      );
+      broadcast(event.channelId, { type: "typing", channelId: event.channelId, userId: client.userId, active: true }, client.ws);
       break;
     }
 
     case "typing_stop": {
-      broadcast(
-        event.channelId,
-        { type: "typing", channelId: event.channelId, userId: client.userId, active: false },
-        client.ws
-      );
+      broadcast(event.channelId, { type: "typing", channelId: event.channelId, userId: client.userId, active: false }, client.ws);
       break;
     }
 
     case "voice_state_update": {
       if (event.action === "join") {
-        // Leave any previous voice channel first
         if (client.voiceChannelId) {
-          const prevChannel = client.voiceChannelId;
-          removeFromVoiceChannel(prevChannel, client.userId);
-          broadcastVoiceState(prevChannel);
+          const prev = client.voiceChannelId;
+          removeFromVoiceChannel(prev, client.userId);
+          broadcastVoiceState(prev);
         }
-        // Join the new voice channel
         client.voiceChannelId = event.channelId;
         addToVoiceChannel(event.channelId, client.userId, client.username);
         broadcastVoiceState(event.channelId);
       } else if (event.action === "leave") {
         if (client.voiceChannelId) {
-          const prevChannel = client.voiceChannelId;
-          removeFromVoiceChannel(prevChannel, client.userId);
-          broadcastVoiceState(prevChannel);
+          const prev = client.voiceChannelId;
+          removeFromVoiceChannel(prev, client.userId);
+          broadcastVoiceState(prev);
           client.voiceChannelId = null;
+        }
+      }
+      break;
+    }
+
+    case "add_reaction": {
+      const [existing] = await db.select().from(reactions).where(
+        and(eq(reactions.messageId, event.messageId), eq(reactions.userId, client.userId), eq(reactions.emoji, event.emoji))
+      );
+      if (existing) return;
+
+      await db.insert(reactions).values({ messageId: event.messageId, userId: client.userId, emoji: event.emoji });
+
+      const [msg] = await db.select().from(messages).where(eq(messages.id, event.messageId));
+      if (msg) {
+        broadcast(msg.channelId, { type: "reaction_add", messageId: event.messageId, userId: client.userId, emoji: event.emoji });
+      }
+      break;
+    }
+
+    case "remove_reaction": {
+      await db.delete(reactions).where(
+        and(eq(reactions.messageId, event.messageId), eq(reactions.userId, client.userId), eq(reactions.emoji, event.emoji))
+      );
+      const [msg] = await db.select().from(messages).where(eq(messages.id, event.messageId));
+      if (msg) {
+        broadcast(msg.channelId, { type: "reaction_remove", messageId: event.messageId, userId: client.userId, emoji: event.emoji });
+      }
+      break;
+    }
+
+    case "join_dm": {
+      client.subscribedDMs.add(event.dmChannelId);
+      let subs = dmSubscriptions.get(event.dmChannelId);
+      if (!subs) { subs = new Set(); dmSubscriptions.set(event.dmChannelId, subs); }
+      subs.add(client.ws);
+      break;
+    }
+
+    case "leave_dm": {
+      client.subscribedDMs.delete(event.dmChannelId);
+      const subs = dmSubscriptions.get(event.dmChannelId);
+      if (subs) { subs.delete(client.ws); if (subs.size === 0) dmSubscriptions.delete(event.dmChannelId); }
+      break;
+    }
+
+    case "send_dm": {
+      const error = validateMessageContent(event.ciphertext);
+      if (error) { sendError(client.ws, error); return; }
+
+      const [dmChannel] = await db.select().from(dmChannels).where(
+        and(eq(dmChannels.id, event.dmChannelId), or(eq(dmChannels.user1Id, client.userId), eq(dmChannels.user2Id, client.userId)))
+      );
+      if (!dmChannel) { sendError(client.ws, "Not a participant of this DM"); return; }
+
+      const [message] = await db.insert(dmMessages).values({
+        dmChannelId: event.dmChannelId, senderId: client.userId, ciphertext: event.ciphertext, mlsEpoch: event.mlsEpoch,
+      }).returning();
+
+      const dmEvent: WSServerEvent = {
+        type: "dm_message",
+        message: {
+          id: message.id, dmChannelId: message.dmChannelId, senderId: message.senderId,
+          ciphertext: message.ciphertext, mlsEpoch: message.mlsEpoch, createdAt: message.createdAt,
+        },
+      };
+
+      broadcastDM(event.dmChannelId, dmEvent);
+
+      // Also send to the other user if they're connected but not subscribed to this DM
+      const otherUserId = dmChannel.user1Id === client.userId ? dmChannel.user2Id : dmChannel.user1Id;
+      const dmSubSet = dmSubscriptions.get(event.dmChannelId);
+      for (const [ws, c] of clients) {
+        if (c.userId === otherUserId && (!dmSubSet || !dmSubSet.has(ws)) && ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify(dmEvent));
         }
       }
       break;
@@ -252,8 +317,7 @@ async function handleClientEvent(client: ConnectedClient, event: WSClientEvent) 
 }
 
 function broadcastPresence(userId: string, status: "online" | "offline") {
-  const event: WSServerEvent = { type: "presence", userId, status };
-  const data = JSON.stringify(event);
+  const data = JSON.stringify({ type: "presence", userId, status } satisfies WSServerEvent);
   for (const [ws] of clients) {
     if (ws.readyState === ws.OPEN) {
       ws.send(data);

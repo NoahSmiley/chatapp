@@ -6,6 +6,7 @@ import { auth } from "./auth.js";
 import { serverRoutes } from "./routes/servers.js";
 import { messageRoutes } from "./routes/messages.js";
 import { voiceRoutes } from "./routes/voice.js";
+import { dmRoutes } from "./routes/dms.js";
 import { registerGateway } from "./ws/gateway.js";
 import { toWebHeaders } from "./util/headers.js";
 
@@ -64,6 +65,7 @@ await app.register(async (authApp) => {
 await app.register(serverRoutes, { prefix: "/api" });
 await app.register(messageRoutes, { prefix: "/api" });
 await app.register(voiceRoutes, { prefix: "/api" });
+await app.register(dmRoutes, { prefix: "/api" });
 
 // WebSocket gateway
 await app.register(registerGateway);

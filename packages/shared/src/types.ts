@@ -43,6 +43,10 @@ export interface Membership {
   joinedAt: string;
 }
 
+export interface MemberWithUser extends Membership {
+  username: string;
+}
+
 export type MemberRole = "owner" | "admin" | "member";
 
 // ── Messages ──
@@ -72,6 +76,34 @@ export interface FileAttachment {
   iv: string; // base64 initialization vector
 }
 
+// ── Reactions ──
+
+export interface Reaction {
+  id: string;
+  messageId: string;
+  userId: string;
+  emoji: string;
+  createdAt: string;
+}
+
+// ── Direct Messages ──
+
+export interface DMChannel {
+  id: string;
+  user1Id: string;
+  user2Id: string;
+  createdAt: string;
+}
+
+export interface DMMessage {
+  id: string;
+  dmChannelId: string;
+  senderId: string;
+  ciphertext: string;
+  mlsEpoch: number;
+  createdAt: string;
+}
+
 // ── Voice ──
 
 export interface VoiceParticipant {
@@ -87,7 +119,12 @@ export type WSClientEvent =
   | { type: "typing_stop"; channelId: string }
   | { type: "join_channel"; channelId: string }
   | { type: "leave_channel"; channelId: string }
-  | { type: "voice_state_update"; channelId: string; action: "join" | "leave" };
+  | { type: "voice_state_update"; channelId: string; action: "join" | "leave" }
+  | { type: "add_reaction"; messageId: string; emoji: string }
+  | { type: "remove_reaction"; messageId: string; emoji: string }
+  | { type: "send_dm"; dmChannelId: string; ciphertext: string; mlsEpoch: number }
+  | { type: "join_dm"; dmChannelId: string }
+  | { type: "leave_dm"; dmChannelId: string };
 
 export type WSServerEvent =
   | { type: "message"; message: Message }
@@ -96,6 +133,9 @@ export type WSServerEvent =
   | { type: "member_joined"; serverId: string; userId: string }
   | { type: "member_left"; serverId: string; userId: string }
   | { type: "voice_state"; channelId: string; participants: VoiceParticipant[] }
+  | { type: "reaction_add"; messageId: string; userId: string; emoji: string }
+  | { type: "reaction_remove"; messageId: string; userId: string; emoji: string }
+  | { type: "dm_message"; message: DMMessage }
   | { type: "error"; message: string };
 
 export type PresenceStatus = "online" | "idle" | "offline";

@@ -6,7 +6,10 @@ import type {
   CreateServerRequest,
   CreateChannelRequest,
   UpdateChannelRequest,
-  Membership,
+  MemberWithUser,
+  Reaction,
+  DMChannel,
+  DMMessage,
 } from "@flux/shared";
 
 const BASE_URL = "/api";
@@ -79,7 +82,7 @@ export async function joinServer(inviteCode: string) {
 }
 
 export async function getServerMembers(serverId: string) {
-  return request<Membership[]>(`/servers/${serverId}/members`);
+  return request<MemberWithUser[]>(`/servers/${serverId}/members`);
 }
 
 // ── Channels ──
@@ -113,6 +116,42 @@ export async function deleteChannel(serverId: string, channelId: string) {
 export async function getMessages(channelId: string, cursor?: string) {
   const params = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return request<PaginatedResponse<Message>>(`/channels/${channelId}/messages${params}`);
+}
+
+// ── Search ──
+
+export async function searchMessages(channelId: string, query: string) {
+  return request<{ items: Message[] }>(
+    `/channels/${channelId}/messages/search?q=${encodeURIComponent(query)}`
+  );
+}
+
+// ── Reactions ──
+
+export async function getReactions(messageIds: string[]) {
+  return request<Reaction[]>(`/messages/reactions?ids=${messageIds.join(",")}`);
+}
+
+// ── Direct Messages ──
+
+export async function getDMChannels() {
+  return request<{ id: string; otherUser: { id: string; username: string }; createdAt: string }[]>("/dms");
+}
+
+export async function createDM(userId: string) {
+  return request<{ id: string; otherUser: { id: string; username: string }; createdAt: string }>("/dms", {
+    method: "POST",
+    body: JSON.stringify({ userId }),
+  });
+}
+
+export async function getDMMessages(dmChannelId: string, cursor?: string) {
+  const params = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return request<PaginatedResponse<DMMessage>>(`/dms/${dmChannelId}/messages${params}`);
+}
+
+export async function searchUsers(query: string) {
+  return request<{ id: string; username: string }[]>(`/users/search?q=${encodeURIComponent(query)}`);
 }
 
 // ── Voice ──

@@ -3,7 +3,7 @@ import { useChatStore } from "../stores/chat.js";
 import { FluxLogo } from "./FluxLogo.js";
 
 export function ServerSidebar() {
-  const { servers, activeServerId, selectServer, createServer, joinServer } = useChatStore();
+  const { servers, activeServerId, showingDMs, selectServer, createServer, joinServer, showDMs } = useChatStore();
   const [showModal, setShowModal] = useState<"create" | "join" | null>(null);
   const [input, setInput] = useState("");
 
@@ -23,6 +23,14 @@ export function ServerSidebar() {
       <div className="server-sidebar-logo" title="Flux">
         <FluxLogo size={36} />
       </div>
+
+      <button
+        className={`server-icon dm-icon ${showingDMs ? "active" : ""}`}
+        onClick={() => showDMs()}
+        title="Direct Messages"
+      >
+        DM
+      </button>
 
       <div className="server-sidebar-divider" />
 

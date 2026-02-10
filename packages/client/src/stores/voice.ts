@@ -1,8 +1,36 @@
 import { create } from "zustand";
-import { Room, RoomEvent } from "livekit-client";
+import { Room, RoomEvent, Track } from "livekit-client";
 import type { VoiceParticipant } from "@flux/shared";
 import * as api from "../lib/api.js";
 import { gateway } from "../lib/ws.js";
+
+function playTone(frequencies: number[], duration = 0.08) {
+  const ctx = new AudioContext();
+  const gain = ctx.createGain();
+  gain.connect(ctx.destination);
+  gain.gain.value = 0.15;
+  let t = ctx.currentTime;
+  for (const freq of frequencies) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    osc.start(t);
+    osc.stop(t + duration);
+    t += duration + 0.02;
+  }
+  gain.gain.setValueAtTime(0.15, t - 0.02);
+  gain.gain.linearRampToValueAtTime(0, t + 0.05);
+  setTimeout(() => ctx.close(), (t - ctx.currentTime + 0.1) * 1000);
+}
+
+function playJoinSound() {
+  playTone([440, 580]);
+}
+
+function playLeaveSound() {
+  playTone([520, 380]);
+}
 
 interface VoiceUser {
   userId: string;
@@ -79,6 +107,18 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       room.on(RoomEvent.ActiveSpeakersChanged, () => get()._updateParticipants());
       room.on(RoomEvent.TrackMuted, () => get()._updateParticipants());
       room.on(RoomEvent.TrackUnmuted, () => get()._updateParticipants());
+
+      // Attach remote audio tracks to DOM so they actually play
+      room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant) => {
+        if (track.kind === Track.Kind.Audio) {
+          const el = track.attach();
+          el.id = `lk-audio-${track.sid}`;
+          document.body.appendChild(el);
+        }
+      });
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach((el) => el.remove());
+      });
       room.on(RoomEvent.Disconnected, () => {
         set({
           room: null,
@@ -102,6 +142,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
       get()._updateParticipants();
 
+      playJoinSound();
+
       // Notify server via WebSocket
       gateway.send({ type: "voice_state_update", channelId, action: "join" });
     } catch (err) {
@@ -116,7 +158,17 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     const { room, connectedChannelId, channelParticipants } = get();
     const localId = room?.localParticipant?.identity;
 
+    playLeaveSound();
+
     if (room) {
+      // Clean up any attached audio elements
+      for (const participant of room.remoteParticipants.values()) {
+        for (const publication of participant.audioTrackPublications.values()) {
+          if (publication.track) {
+            publication.track.detach().forEach((el) => el.remove());
+          }
+        }
+      }
       room.disconnect();
     }
     if (connectedChannelId) {

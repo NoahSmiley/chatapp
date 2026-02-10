@@ -45,6 +45,7 @@ export interface Membership {
 
 export interface MemberWithUser extends Membership {
   username: string;
+  image: string | null;
 }
 
 export type MemberRole = "owner" | "admin" | "member";
@@ -58,6 +59,7 @@ export interface Message {
   ciphertext: string; // base64-encoded encrypted content
   mlsEpoch: number;
   createdAt: string;
+  editedAt?: string;
 }
 
 /** Decrypted message content (client-side only, never sent to server) */
@@ -122,6 +124,7 @@ export type WSClientEvent =
   | { type: "voice_state_update"; channelId: string; action: "join" | "leave" }
   | { type: "add_reaction"; messageId: string; emoji: string }
   | { type: "remove_reaction"; messageId: string; emoji: string }
+  | { type: "edit_message"; messageId: string; ciphertext: string }
   | { type: "send_dm"; dmChannelId: string; ciphertext: string; mlsEpoch: number }
   | { type: "join_dm"; dmChannelId: string }
   | { type: "leave_dm"; dmChannelId: string };
@@ -135,6 +138,7 @@ export type WSServerEvent =
   | { type: "voice_state"; channelId: string; participants: VoiceParticipant[] }
   | { type: "reaction_add"; messageId: string; userId: string; emoji: string }
   | { type: "reaction_remove"; messageId: string; userId: string; emoji: string }
+  | { type: "message_edit"; messageId: string; ciphertext: string; editedAt: string }
   | { type: "dm_message"; message: DMMessage }
   | { type: "error"; message: string };
 

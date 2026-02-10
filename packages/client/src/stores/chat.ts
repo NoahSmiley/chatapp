@@ -38,6 +38,7 @@ interface ChatState {
   selectChannel: (channelId: string) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
   sendMessage: (content: string) => void;
+  editMessage: (messageId: string, newContent: string) => void;
   createServer: (name: string) => Promise<void>;
   joinServer: (inviteCode: string) => Promise<void>;
   addReaction: (messageId: string, emoji: string) => void;
@@ -145,6 +146,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messageCursor: result.cursor,
           loadingMessages: false,
         });
+
+        // Load reactions for the fetched messages
+        if (result.items.length > 0) {
+          try {
+            const reactionItems = await api.getReactions(result.items.map((m) => m.id));
+            const grouped: Record<string, { emoji: string; userIds: string[] }[]> = {};
+            for (const r of reactionItems) {
+              if (!grouped[r.messageId]) grouped[r.messageId] = [];
+              const existing = grouped[r.messageId].find((g) => g.emoji === r.emoji);
+              if (existing) {
+                existing.userIds.push(r.userId);
+              } else {
+                grouped[r.messageId].push({ emoji: r.emoji, userIds: [r.userId] });
+              }
+            }
+            set({ reactions: grouped });
+          } catch { /* non-critical */ }
+        }
       } catch {
         set({ loadingMessages: false });
       }
@@ -178,6 +197,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       channelId: activeChannelId,
       ciphertext: btoa(content),
       mlsEpoch: 0,
+    });
+  },
+
+  editMessage: (messageId, newContent) => {
+    if (!newContent.trim()) return;
+    gateway.send({
+      type: "edit_message",
+      messageId,
+      ciphertext: btoa(newContent),
     });
   },
 
@@ -337,6 +365,15 @@ export function getUsernameMap(members: MemberWithUser[]): Record<string, string
   return map;
 }
 
+// Helper to get image map
+export function getUserImageMap(members: MemberWithUser[]): Record<string, string | null> {
+  const map: Record<string, string | null> = {};
+  for (const m of members) {
+    map[m.userId] = m.image;
+  }
+  return map;
+}
+
 // Lazy ref to auth store to avoid circular imports
 let authStoreRef: typeof import("../stores/auth.js").useAuthStore | null = null;
 import("../stores/auth.js").then((m) => { authStoreRef = m.useAuthStore; });
@@ -378,6 +415,22 @@ gateway.on((event) => {
         return { onlineUsers: newSet };
       });
       break;
+
+    case "message_edit": {
+      useChatStore.setState((s) => ({
+        messages: s.messages.map((m) =>
+          m.id === event.messageId
+            ? { ...m, ciphertext: event.ciphertext, editedAt: event.editedAt }
+            : m
+        ),
+        searchResults: s.searchResults?.map((m) =>
+          m.id === event.messageId
+            ? { ...m, ciphertext: event.ciphertext, editedAt: event.editedAt }
+            : m
+        ) ?? null,
+      }));
+      break;
+    }
 
     case "reaction_add":
       useChatStore.setState((s) => {

@@ -1,17 +1,25 @@
 import { create } from "zustand";
 import * as api from "../lib/api.js";
 
+interface AuthUser {
+  id: string;
+  email: string;
+  username: string;
+  image?: string | null;
+}
+
 interface AuthState {
-  user: { id: string; email: string; username: string } | null;
+  user: AuthUser | null;
   loading: boolean;
   error: string | null;
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, username: string) => Promise<void>;
   logout: () => Promise<void>;
+  updateProfile: (data: { username?: string; image?: string | null }) => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   loading: true,
   error: null,
@@ -52,6 +60,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: async () => {
     try { await api.signOut(); } catch { /* ignore */ }
     set({ user: null });
+  },
+
+  updateProfile: async (data) => {
+    const result = await api.updateUserProfile(data);
+    const current = get().user;
+    if (current) {
+      set({ user: { ...current, username: result.username, image: result.image } });
+    }
   },
 }));
 

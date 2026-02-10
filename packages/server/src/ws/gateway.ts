@@ -203,6 +203,7 @@ async function handleClientEvent(client: ConnectedClient, event: WSClientEvent) 
         message: {
           id: message.id, channelId: message.channelId, senderId: message.senderId,
           ciphertext: message.ciphertext, mlsEpoch: message.mlsEpoch, createdAt: message.createdAt,
+          editedAt: message.editedAt ?? undefined,
         },
       });
       break;
@@ -236,6 +237,28 @@ async function handleClientEvent(client: ConnectedClient, event: WSClientEvent) 
           client.voiceChannelId = null;
         }
       }
+      break;
+    }
+
+    case "edit_message": {
+      const [msg] = await db.select().from(messages).where(eq(messages.id, event.messageId));
+      if (!msg) { sendError(client.ws, "Message not found"); return; }
+      if (msg.senderId !== client.userId) { sendError(client.ws, "Cannot edit another user's message"); return; }
+
+      const error = validateMessageContent(event.ciphertext);
+      if (error) { sendError(client.ws, error); return; }
+
+      const editedAt = new Date().toISOString();
+      await db.update(messages).set({ ciphertext: event.ciphertext, editedAt }).where(eq(messages.id, event.messageId));
+
+      // Update FTS index
+      try {
+        const plaintext = Buffer.from(event.ciphertext, "base64").toString("utf-8");
+        sqlite.prepare(`DELETE FROM messages_fts WHERE message_id = ?`).run(event.messageId);
+        ftsInsert.run(event.messageId, plaintext);
+      } catch { /* non-critical */ }
+
+      broadcast(msg.channelId, { type: "message_edit", messageId: event.messageId, ciphertext: event.ciphertext, editedAt });
       break;
     }
 

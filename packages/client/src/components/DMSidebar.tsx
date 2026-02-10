@@ -1,11 +1,9 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect } from "react";
 import { useChatStore } from "../stores/chat.js";
-import { useAuthStore } from "../stores/auth.js";
 import * as api from "../lib/api.js";
 
 export function DMSidebar() {
   const { dmChannels, activeDMChannelId, selectDM, openDM, loadDMChannels, onlineUsers } = useChatStore();
-  const { user } = useAuthStore();
   const [showSearch, setShowSearch] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchResults, setSearchResults] = useState<{ id: string; username: string }[]>([]);
@@ -14,11 +12,11 @@ export function DMSidebar() {
     loadDMChannels();
   }, [loadDMChannels]);
 
-  async function handleSearch(e: FormEvent) {
-    e.preventDefault();
-    if (!searchInput.trim()) return;
+  async function handleSearchInput(value: string) {
+    setSearchInput(value);
+    if (!value.trim()) { setSearchResults([]); return; }
     try {
-      const results = await api.searchUsers(searchInput.trim());
+      const results = await api.searchUsers(value.trim());
       setSearchResults(results);
     } catch {
       setSearchResults([]);
@@ -46,15 +44,13 @@ export function DMSidebar() {
 
       {showSearch && (
         <div className="dm-search-panel">
-          <form onSubmit={handleSearch}>
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              autoFocus
-            />
-          </form>
+          <input
+            type="text"
+            placeholder="Search users..."
+            value={searchInput}
+            onChange={(e) => handleSearchInput(e.target.value)}
+            autoFocus
+          />
           {searchResults.map((u) => (
             <button key={u.id} className="dm-search-result" onClick={() => handleStartDM(u.id)}>
               <span className={`status-dot ${onlineUsers.has(u.id) ? "online" : "offline"}`} />

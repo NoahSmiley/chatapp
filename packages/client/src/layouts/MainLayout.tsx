@@ -9,11 +9,12 @@ import { VoiceChannelView } from "../components/VoiceChannelView.js";
 import { ScreenSharePicker } from "../components/ScreenSharePicker.js";
 import { DMSidebar } from "../components/DMSidebar.js";
 import { DMChatView } from "../components/DMChatView.js";
+import { MemberList } from "../components/MemberList.js";
 import { requestNotificationPermission } from "../lib/notifications.js";
 
 export function MainLayout() {
-  const { loadServers, activeServerId, activeChannelId, channels, showingDMs, activeDMChannelId } = useChatStore();
-  const { logout, user } = useAuthStore();
+  const { loadServers, activeServerId, activeChannelId, channels, showingDMs, activeDMChannelId, members } = useChatStore();
+  const { user } = useAuthStore();
 
   useEffect(() => {
     gateway.connect();
@@ -21,6 +22,14 @@ export function MainLayout() {
     requestNotificationPermission();
     return () => gateway.disconnect();
   }, [loadServers]);
+
+  // Update titlebar overlay color based on DM vs server view
+  useEffect(() => {
+    // DM page: main content bg is --bg-primary (#0a0a0a)
+    // Server page: channel sidebar bg is --bg-secondary (#0e0e0e)
+    const color = showingDMs ? "#0a0a0a" : "#0e0e0e";
+    window.flux?.setTitleBarOverlayColor?.(color);
+  }, [showingDMs]);
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
 
@@ -58,10 +67,7 @@ export function MainLayout() {
         )}
       </main>
 
-      <div className="user-bar">
-        <span className="user-bar-name">{user?.username}</span>
-        <button onClick={logout} className="btn-small">Sign Out</button>
-      </div>
+      {activeServerId && members.length > 0 && !showingDMs && <MemberList />}
 
       <ScreenSharePicker />
     </div>

@@ -134,6 +134,7 @@ export const messages = sqliteTable(
     ciphertext: text("ciphertext").notNull(),
     mlsEpoch: integer("mls_epoch").notNull().default(0),
     createdAt: ts("created_at"),
+    editedAt: tsNullable("edited_at"),
   },
   (table) => [
     index("idx_messages_channel_time").on(table.channelId, table.createdAt),

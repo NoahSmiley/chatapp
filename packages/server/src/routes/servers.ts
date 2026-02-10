@@ -259,6 +259,7 @@ export async function serverRoutes(app: FastifyInstance) {
         role: memberships.role,
         joinedAt: memberships.joinedAt,
         username: users.username,
+        image: users.image,
       })
       .from(memberships)
       .innerJoin(users, eq(users.id, memberships.userId))

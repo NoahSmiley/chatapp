@@ -1,6 +1,37 @@
-import { useState, useRef, useEffect, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent, type ReactNode } from "react";
 import { useChatStore } from "../stores/chat.js";
 import { useAuthStore } from "../stores/auth.js";
+
+const URL_REGEX = /https?:\/\/[^\s<]+/g;
+
+function renderDMContent(text: string): ReactNode[] {
+  const segments: ReactNode[] = [];
+  let lastIndex = 0;
+
+  URL_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = URL_REGEX.exec(text)) !== null) {
+    if (m.index > lastIndex) {
+      segments.push(text.slice(lastIndex, m.index));
+    }
+    segments.push(
+      <a key={m.index} href={m[0]} target="_blank" rel="noopener noreferrer">
+        {m[0]}
+      </a>
+    );
+    lastIndex = m.index + m[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push(text.slice(lastIndex));
+  }
+
+  return segments.length > 0 ? segments : [text];
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).catch(() => {});
+}
 
 export function DMChatView() {
   const {
@@ -9,6 +40,7 @@ export function DMChatView() {
   } = useChatStore();
   const { user } = useAuthStore();
   const [input, setInput] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -40,6 +72,12 @@ export function DMChatView() {
     }
   }
 
+  function handleCopy(text: string, id: string) {
+    copyToClipboard(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1500);
+  }
+
   return (
     <div className="chat-view">
       <div className="chat-header">
@@ -57,18 +95,41 @@ export function DMChatView() {
         {loadingMessages && <div className="loading-messages">Loading...</div>}
 
         {dmMessages.map((msg) => {
-          const senderName = msg.senderId === user?.id ? "You" : (dm?.otherUser.username ?? msg.senderId.slice(0, 8));
+          const isOwn = msg.senderId === user?.id;
+          const senderName = isOwn ? (user?.username ?? "You") : (dm?.otherUser.username ?? msg.senderId.slice(0, 8));
+          const senderImage = isOwn ? (user?.image ?? null) : null;
           const decoded = decodeContent(msg.ciphertext);
 
           return (
-            <div key={msg.id} className={`message ${msg.senderId === user?.id ? "own" : ""}`}>
-              <div className="message-header">
-                <span className="message-sender">{senderName}</span>
-                <span className="message-time">
-                  {new Date(msg.createdAt).toLocaleTimeString()}
-                </span>
+            <div key={msg.id} className={`message ${isOwn ? "own" : ""}`}>
+              <div className="message-avatar">
+                {senderImage ? (
+                  <img src={senderImage} alt={senderName} className="avatar-img" />
+                ) : (
+                  <div className="avatar-fallback">{senderName.charAt(0).toUpperCase()}</div>
+                )}
               </div>
-              <div className="message-body">{decoded}</div>
+              <div className="message-content">
+                <div className="message-header">
+                  <span
+                    className={`message-sender ${copiedId === `s-${msg.id}` ? "copied" : ""}`}
+                    onClick={() => handleCopy(senderName, `s-${msg.id}`)}
+                    title="Click to copy username"
+                  >
+                    {senderName}
+                  </span>
+                  <span
+                    className={`message-time ${copiedId === `t-${msg.id}` ? "copied" : ""}`}
+                    onClick={() => handleCopy(new Date(msg.createdAt).toLocaleString(), `t-${msg.id}`)}
+                    title="Click to copy timestamp"
+                  >
+                    {new Date(msg.createdAt).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="message-body">
+                  {renderDMContent(decoded)}
+                </div>
+              </div>
             </div>
           );
         })}

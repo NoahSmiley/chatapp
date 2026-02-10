@@ -148,6 +148,13 @@ try {
   // Column already exists
 }
 
+// Add edited_at column if missing (migration for existing databases)
+try {
+  sqlite.exec(`ALTER TABLE "messages" ADD COLUMN edited_at TEXT`);
+} catch {
+  // Column already exists
+}
+
 // Full-text search index for messages
 sqlite.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(

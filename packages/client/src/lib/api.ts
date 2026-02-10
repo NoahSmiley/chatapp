@@ -54,11 +54,20 @@ export async function signOut() {
   return request("/auth/sign-out", { method: "POST" });
 }
 
-export async function getSession(): Promise<{ user: { id: string; email: string; username: string } } | null> {
+export async function getSession(): Promise<{ user: { id: string; email: string; username: string; image?: string | null } } | null> {
   const res = await fetch(`${BASE_URL}/auth/get-session`, { credentials: "include" });
   if (!res.ok) return null;
   const data = await res.json();
   return data ?? null;
+}
+
+// ── User Profile ──
+
+export async function updateUserProfile(data: { username?: string; image?: string | null }) {
+  return request<{ id: string; username: string; email: string; image: string | null }>("/users/me", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 // ── Servers ──

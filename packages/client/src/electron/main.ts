@@ -20,7 +20,7 @@ function createWindow() {
     title: "Flux",
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#0a0a0a",
+      color: "#0e0e0e",
       symbolColor: "#e8e8e8",
       height: 36,
     },
@@ -91,6 +91,19 @@ ipcMain.on("screen-share-cancel", () => {
   }
 });
 
+// Titlebar color IPC
+ipcMain.on("set-titlebar-color", (_event, color: string) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.setTitleBarOverlay({
+        color,
+        symbolColor: "#e8e8e8",
+        height: 36,
+      });
+    } catch { /* not supported on all platforms */ }
+  }
+});
+
 // Pop-out window IPC
 ipcMain.handle("open-popout-window", (_event, type: "chat" | "screenshare") => {
   if (popoutWindows.has(type)) {
@@ -109,7 +122,7 @@ ipcMain.handle("open-popout-window", (_event, type: "chat" | "screenshare") => {
     title: type === "chat" ? "Flux - Chat" : "Flux - Screen Share",
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#0a0a0a",
+      color: "#0e0e0e",
       symbolColor: "#e8e8e8",
       height: 36,
     },

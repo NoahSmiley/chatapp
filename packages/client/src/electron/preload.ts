@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld("flux", {
     ipcRenderer.send("screen-share-cancel");
   },
 
+  // Titlebar
+  setTitleBarOverlayColor: (color: string) => {
+    ipcRenderer.send("set-titlebar-color", color);
+  },
+
   // Pop-out windows
   openPopoutWindow: (type: "chat" | "screenshare") => {
     return ipcRenderer.invoke("open-popout-window", type);

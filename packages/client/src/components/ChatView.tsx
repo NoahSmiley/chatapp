@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useMemo, type FormEvent, type ReactNode, type KeyboardEvent } from "react";
-import { useChatStore, getUsernameMap } from "../stores/chat.js";
+import { useChatStore, getUsernameMap, getUserImageMap } from "../stores/chat.js";
 import { useAuthStore } from "../stores/auth.js";
 
-const QUICK_EMOJIS = ["👍", "👎", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👀", "💯"];
+const QUICK_EMOJIS = ["👍", "👎", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👀", "🗿"];
 
 const URL_REGEX = /https?:\/\/[^\s<]+/g;
 const MENTION_REGEX = /@([a-zA-Z0-9_-]+)/g;
@@ -59,15 +59,18 @@ function copyToClipboard(text: string) {
 
 export function ChatView() {
   const {
-    messages, sendMessage, loadMoreMessages, hasMoreMessages, loadingMessages,
-    members, onlineUsers, reactions, addReaction, removeReaction,
+    messages, sendMessage, editMessage, loadMoreMessages, hasMoreMessages, loadingMessages,
+    members, reactions, addReaction, removeReaction,
     searchMessages, searchResults, searchQuery, clearSearch,
+    channels, activeChannelId,
   } = useChatStore();
   const { user } = useAuthStore();
   const [input, setInput] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editInput, setEditInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -78,6 +81,7 @@ export function ChatView() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const usernameMap = useMemo(() => getUsernameMap(members), [members]);
+  const imageMap = useMemo(() => getUserImageMap(members), [members]);
   const memberUsernames = useMemo(() => new Set(members.map((m) => m.username)), [members]);
 
   const filteredMentions = useMemo(() => {
@@ -140,6 +144,23 @@ export function ChatView() {
     }
   }
 
+  function startEditing(msgId: string, currentText: string) {
+    setEditingMsgId(msgId);
+    setEditInput(currentText);
+  }
+
+  function cancelEditing() {
+    setEditingMsgId(null);
+    setEditInput("");
+  }
+
+  function submitEdit(msgId: string) {
+    if (editInput.trim()) {
+      editMessage(msgId, editInput.trim());
+    }
+    cancelEditing();
+  }
+
   function handleInputChange(value: string) {
     setInput(value);
     const cursorPos = inputRef.current?.selectionStart ?? value.length;
@@ -189,22 +210,25 @@ export function ChatView() {
   return (
     <div className="chat-view">
       <div className="chat-header">
-        <form className="search-bar" onSubmit={handleSearchSubmit}>
-          <input
-            type="text"
-            placeholder="Search messages..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          {searchResults && (
-            <button type="button" className="btn-small" onClick={() => { clearSearch(); setSearchInput(""); }}>
-              Clear
-            </button>
-          )}
-        </form>
-        <button className="btn-small popout-btn" onClick={handlePopOut} title="Pop out chat">
-          &#x2197;
-        </button>
+        <span className="chat-header-channel"># {channels.find((c) => c.id === activeChannelId)?.name}</span>
+        <div className="chat-header-actions">
+          <form className="search-bar" onSubmit={handleSearchSubmit}>
+            <input
+              type="text"
+              placeholder="Search..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            {searchResults && (
+              <button type="button" className="btn-small" onClick={() => { clearSearch(); setSearchInput(""); }}>
+                Clear
+              </button>
+            )}
+          </form>
+          <button className="btn-small popout-btn" onClick={handlePopOut} title="Pop out chat">
+            &#x2197;
+          </button>
+        </div>
       </div>
 
       {searchResults && (
@@ -217,18 +241,25 @@ export function ChatView() {
         {loadingMessages && <div className="loading-messages">Loading...</div>}
 
         {displayMessages.map((msg) => {
-          const senderName = msg.senderId === user?.id ? "You" : (usernameMap[msg.senderId] ?? msg.senderId.slice(0, 8));
-          const isOnline = onlineUsers.has(msg.senderId);
+          const senderName = usernameMap[msg.senderId] ?? (msg.senderId === user?.id ? (user?.username ?? msg.senderId.slice(0, 8)) : msg.senderId.slice(0, 8));
+          const senderImage = imageMap[msg.senderId] ?? null;
           const msgReactions = reactions[msg.id] ?? [];
           const decoded = decodeContent(msg.ciphertext);
 
           return (
             <div key={msg.id} className={`message ${msg.senderId === user?.id ? "own" : ""}`}>
+              <div className="message-avatar">
+                {senderImage ? (
+                  <img src={senderImage} alt={senderName} className="avatar-img" />
+                ) : (
+                  <div className="avatar-fallback">{senderName.charAt(0).toUpperCase()}</div>
+                )}
+              </div>
+              <div className="message-content">
               <div className="message-header">
-                <span className={`status-dot ${isOnline ? "online" : "offline"}`} />
                 <span
                   className={`message-sender ${copiedId === `s-${msg.id}` ? "copied" : ""}`}
-                  onClick={() => handleCopy(senderName === "You" ? (user?.username ?? "") : senderName, `s-${msg.id}`)}
+                  onClick={() => handleCopy(senderName, `s-${msg.id}`)}
                   title="Click to copy username"
                 >
                   {senderName}
@@ -242,44 +273,80 @@ export function ChatView() {
                 </span>
               </div>
               <div className="message-body">
-                {renderMessageContent(decoded, memberUsernames)}
+                {editingMsgId === msg.id ? (
+                  <div className="message-edit-form">
+                    <input
+                      type="text"
+                      className="message-edit-input"
+                      value={editInput}
+                      onChange={(e) => setEditInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submitEdit(msg.id);
+                        if (e.key === "Escape") cancelEditing();
+                      }}
+                      autoFocus
+                    />
+                    <div className="message-edit-actions">
+                      <button className="btn-small" onClick={cancelEditing}>Cancel</button>
+                      <button className="btn-small btn-primary" onClick={() => submitEdit(msg.id)}>Save</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {renderMessageContent(decoded, memberUsernames)}
+                    {msg.editedAt && <span className="message-edited">(edited)</span>}
+                  </>
+                )}
               </div>
 
-              <div className="message-reactions">
-                {msgReactions.map(({ emoji, userIds }) => (
-                  <button
-                    key={emoji}
-                    className={`reaction-chip ${userIds.includes(user?.id ?? "") ? "own" : ""}`}
-                    onClick={() =>
-                      userIds.includes(user?.id ?? "")
-                        ? removeReaction(msg.id, emoji)
-                        : addReaction(msg.id, emoji)
-                    }
-                    title={userIds.map((id) => usernameMap[id] ?? id.slice(0, 8)).join(", ")}
-                  >
-                    {emoji} {userIds.length}
-                  </button>
-                ))}
-                <div className="reaction-add-wrapper">
-                  <button
-                    className="reaction-add-btn"
-                    onClick={(e) => { e.stopPropagation(); setEmojiPickerMsgId(emojiPickerMsgId === msg.id ? null : msg.id); }}
-                  >
-                    +
-                  </button>
-                  {emojiPickerMsgId === msg.id && (
-                    <div className="emoji-picker" onClick={(e) => e.stopPropagation()}>
-                      {QUICK_EMOJIS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => { addReaction(msg.id, emoji); setEmojiPickerMsgId(null); }}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+              {msgReactions.length > 0 && (
+                <div className="message-reactions">
+                  {msgReactions.map(({ emoji, userIds }) => (
+                    <button
+                      key={emoji}
+                      className={`reaction-chip ${userIds.includes(user?.id ?? "") ? "own" : ""}`}
+                      onClick={() =>
+                        userIds.includes(user?.id ?? "")
+                          ? removeReaction(msg.id, emoji)
+                          : addReaction(msg.id, emoji)
+                      }
+                      title={userIds.map((id) => usernameMap[id] ?? id.slice(0, 8)).join(", ")}
+                    >
+                      {emoji} {userIds.length}
+                    </button>
+                  ))}
                 </div>
+              )}
+
+              <div className="message-actions">
+                {msg.senderId === user?.id && (
+                  <button
+                    className="reaction-add-btn edit-btn"
+                    onClick={() => startEditing(msg.id, decoded)}
+                    title="Edit message"
+                  >
+                    &#9998;
+                  </button>
+                )}
+                <button
+                  className="reaction-add-btn"
+                  onClick={(e) => { e.stopPropagation(); setEmojiPickerMsgId(emojiPickerMsgId === msg.id ? null : msg.id); }}
+                >
+                  +
+                </button>
+                {emojiPickerMsgId === msg.id && (
+                  <div className="emoji-picker" onClick={(e) => e.stopPropagation()}>
+                    {QUICK_EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => { addReaction(msg.id, emoji); setEmojiPickerMsgId(null); }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               </div>
             </div>
           );
@@ -297,7 +364,7 @@ export function ChatView() {
                 className={`mention-option ${i === mentionIndex ? "selected" : ""}`}
                 onMouseDown={(e) => { e.preventDefault(); insertMention(m.username); }}
               >
-                <span className={`status-dot ${onlineUsers.has(m.userId) ? "online" : "offline"}`} />
+                <span className="mention-dot" />
                 {m.username}
               </button>
             ))}

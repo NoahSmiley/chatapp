@@ -73,28 +73,43 @@ export async function messageRoutes(app: FastifyInstance) {
       .where(and(eq(memberships.userId, user.id), eq(memberships.serverId, channel.serverId)));
     if (!membership) return reply.status(403).send({ error: "Not a member" });
 
-    // FTS5 search — escape special chars for MATCH
+    // Try FTS5 first, fall back to in-memory search on base64-decoded ciphertext
     const safeQuery = query.replace(/['"]/g, "").replace(/\s+/g, " ");
+    let ftsIds: string[] = [];
     try {
       const ftsResults = sqlite.prepare(`
         SELECT message_id FROM messages_fts WHERE plaintext MATCH ? LIMIT 50
       `).all(safeQuery) as { message_id: string }[];
+      ftsIds = ftsResults.map((r) => r.message_id);
+    } catch { /* FTS query failed */ }
 
-      if (ftsResults.length === 0) return { items: [] };
-
-      const ids = ftsResults.map((r) => r.message_id);
+    if (ftsIds.length > 0) {
       const items = await db
         .select()
         .from(messages)
-        .where(and(eq(messages.channelId, channelId), inArray(messages.id, ids)))
+        .where(and(eq(messages.channelId, channelId), inArray(messages.id, ftsIds)))
         .orderBy(desc(messages.createdAt))
         .limit(50);
-
       return { items };
-    } catch {
-      // FTS query failed (bad syntax etc.), fall back to empty
-      return { items: [] };
     }
+
+    // Fallback: load recent messages and filter in-memory by decoding base64
+    const allMsgs = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.channelId, channelId))
+      .orderBy(desc(messages.createdAt))
+      .limit(500);
+
+    const lowerQuery = query.toLowerCase();
+    const items = allMsgs.filter((msg) => {
+      try {
+        const plaintext = Buffer.from(msg.ciphertext, "base64").toString("utf-8");
+        return plaintext.toLowerCase().includes(lowerQuery);
+      } catch { return false; }
+    }).slice(0, 50);
+
+    return { items: items.reverse() };
   });
 
   // Get reactions for a set of messages

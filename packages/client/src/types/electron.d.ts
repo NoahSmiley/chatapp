@@ -18,6 +18,9 @@ interface FluxAPI {
   selectScreenShareSource: (sourceId: string) => void;
   cancelScreenShare: () => void;
 
+  // Titlebar
+  setTitleBarOverlayColor: (color: string) => void;
+
   // Pop-out windows
   openPopoutWindow: (type: "chat" | "screenshare") => Promise<void>;
   closePopoutWindow: (type: "chat" | "screenshare") => Promise<void>;

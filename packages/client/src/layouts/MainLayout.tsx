@@ -6,6 +6,7 @@ import { ServerSidebar } from "../components/ServerSidebar.js";
 import { ChannelSidebar } from "../components/ChannelSidebar.js";
 import { ChatView } from "../components/ChatView.js";
 import { VoiceChannelView } from "../components/VoiceChannelView.js";
+import { ScreenSharePicker } from "../components/ScreenSharePicker.js";
 
 export function MainLayout() {
   const { loadServers, activeServerId, activeChannelId, channels } = useChatStore();
@@ -44,6 +45,8 @@ export function MainLayout() {
         <span className="user-bar-name">{user?.username}</span>
         <button onClick={logout} className="btn-small">Sign Out</button>
       </div>
+
+      <ScreenSharePicker />
     </div>
   );
 }

@@ -1,13 +1,23 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
-import { useChatStore } from "../stores/chat.js";
-import { useAuthStore } from "../stores/auth.js";
+import type { Message } from "@flux/shared";
+import { onStateUpdate, sendCommand, type ChatStateMessage } from "../lib/broadcast.js";
 
-export function ChatView() {
-  const { messages, sendMessage, loadMoreMessages, hasMoreMessages, loadingMessages } = useChatStore();
-  const { user } = useAuthStore();
+export function PopoutChatView() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [channelName, setChannelName] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const cleanup = onStateUpdate((msg) => {
+      if (msg.type === "chat-state") {
+        const chatMsg = msg as ChatStateMessage;
+        setMessages(chatMsg.messages);
+        setChannelName(chatMsg.channelName);
+      }
+    });
+    return cleanup;
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -16,15 +26,8 @@ export function ChatView() {
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!input.trim()) return;
-    sendMessage(input);
+    sendCommand({ type: "send-message", content: input });
     setInput("");
-  }
-
-  function handleScroll() {
-    if (!containerRef.current) return;
-    if (containerRef.current.scrollTop === 0 && hasMoreMessages && !loadingMessages) {
-      loadMoreMessages();
-    }
   }
 
   function decodeContent(ciphertext: string): string {
@@ -35,27 +38,16 @@ export function ChatView() {
     }
   }
 
-  function handlePopOut() {
-    window.flux?.openPopoutWindow("chat");
-  }
-
   return (
-    <div className="chat-view">
-      <div className="chat-header">
-        <button className="btn-small popout-btn" onClick={handlePopOut} title="Pop out chat">
-          &#x2197;
-        </button>
+    <div className="popout-chat">
+      <div className="popout-header">
+        <span>{channelName ? `# ${channelName}` : "Chat"}</span>
       </div>
-      <div className="messages-container" ref={containerRef} onScroll={handleScroll}>
-        {loadingMessages && <div className="loading-messages">Loading...</div>}
-
+      <div className="messages-container popout-messages">
         {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`message ${msg.senderId === user?.id ? "own" : ""}`}
-          >
+          <div key={msg.id} className="message">
             <div className="message-header">
-              <span className="message-sender">{msg.senderId === user?.id ? "You" : msg.senderId.slice(0, 8)}</span>
+              <span className="message-sender">{msg.senderId.slice(0, 8)}</span>
               <span className="message-time">
                 {new Date(msg.createdAt).toLocaleTimeString()}
               </span>
@@ -63,10 +55,8 @@ export function ChatView() {
             <div className="message-body">{decodeContent(msg.ciphertext)}</div>
           </div>
         ))}
-
         <div ref={messagesEndRef} />
       </div>
-
       <form className="message-input-form" onSubmit={handleSubmit}>
         <input
           type="text"

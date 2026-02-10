@@ -716,6 +716,13 @@ input:focus {
   gap: 8px;
 }
 
+.screen-share-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
 .screen-share-label {
   font-size: 12px;
   color: var(--text-secondary);
@@ -756,6 +763,255 @@ input:focus {
   height: 16px;
   accent-color: var(--accent);
   cursor: pointer;
+}
+
+.audio-settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.audio-setting-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audio-setting-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.audio-setting-value {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-slider {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Per-User Volume ── */
+.participant-volume {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.volume-slider {
+  width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.volume-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Screen Share Notifications ── */
+.screen-share-notifications {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.screen-share-notification {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+/* ── Screen Share Picker ── */
+.screen-share-picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.screen-share-picker-content {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 720px;
+  max-height: 80vh;
+  width: 90%;
+  overflow-y: auto;
+}
+
+.screen-share-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.screen-share-picker-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.screen-share-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.screen-share-source {
+  background: var(--bg-secondary);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.15s, transform 0.1s;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen-share-source:hover {
+  border-color: var(--accent);
+  transform: scale(1.02);
+}
+
+.screen-share-thumbnail {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  background: #000;
+}
+
+.screen-share-source-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.screen-share-app-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.screen-share-source-name {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Pop-out Windows ── */
+.popout-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--titlebar-height);
+}
+
+.popout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.popout-status {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.popout-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.popout-messages {
+  flex: 1;
+  min-height: 0;
+}
+
+.popout-screenshare {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.popout-screenshare-video {
+  flex: 1;
+  width: 100%;
+  background: #000;
+  object-fit: contain;
+  min-height: 0;
+}
+
+.popout-btn {
+  font-size: 14px;
+  padding: 4px 8px;
+  line-height: 1;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  flex-shrink: 0;
 }
 
 /* ── Scrollbar ── */

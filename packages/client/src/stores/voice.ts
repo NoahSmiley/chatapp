@@ -3,6 +3,9 @@ import { Room, RoomEvent, Track } from "livekit-client";
 import type { VoiceParticipant } from "@flux/shared";
 import * as api from "../lib/api.js";
 import { gateway } from "../lib/ws.js";
+import { broadcastState, isPopout } from "../lib/broadcast.js";
+
+// ── Sound Effects ──
 
 function playTone(frequencies: number[], duration = 0.08) {
   const ctx = new AudioContext();
@@ -32,6 +35,72 @@ function playLeaveSound() {
   playTone([520, 380]);
 }
 
+function playScreenShareStartSound() {
+  playTone([660, 880], 0.06);
+}
+
+function playScreenShareStopSound() {
+  playTone([880, 660], 0.06);
+}
+
+// ── Audio Pipeline (Web Audio API) ──
+
+interface AudioPipeline {
+  context: AudioContext;
+  source: MediaElementAudioSourceNode;
+  highPass: BiquadFilterNode;
+  lowPass: BiquadFilterNode;
+  gain: GainNode;
+}
+
+const audioPipelines = new Map<string, AudioPipeline>();
+
+function createAudioPipeline(
+  audioElement: HTMLAudioElement,
+  trackSid: string,
+  settings: AudioSettings,
+  volume: number,
+): AudioPipeline {
+  const context = new AudioContext();
+  const source = context.createMediaElementSource(audioElement);
+
+  const highPass = context.createBiquadFilter();
+  highPass.type = "highpass";
+  highPass.frequency.value = settings.highPassFrequency > 0 ? settings.highPassFrequency : 0;
+
+  const lowPass = context.createBiquadFilter();
+  lowPass.type = "lowpass";
+  lowPass.frequency.value = settings.lowPassFrequency > 0 ? settings.lowPassFrequency : 24000;
+
+  const gain = context.createGain();
+  gain.gain.value = volume;
+
+  source.connect(highPass);
+  highPass.connect(lowPass);
+  lowPass.connect(gain);
+  gain.connect(context.destination);
+
+  const pipeline: AudioPipeline = { context, source, highPass, lowPass, gain };
+  audioPipelines.set(trackSid, pipeline);
+  return pipeline;
+}
+
+function destroyAudioPipeline(trackSid: string) {
+  const pipeline = audioPipelines.get(trackSid);
+  if (pipeline) {
+    pipeline.context.close();
+    audioPipelines.delete(trackSid);
+  }
+}
+
+function destroyAllPipelines() {
+  for (const trackSid of [...audioPipelines.keys()]) {
+    destroyAudioPipeline(trackSid);
+  }
+}
+
+// ── Types ──
+
 interface VoiceUser {
   userId: string;
   username: string;
@@ -43,6 +112,9 @@ interface AudioSettings {
   echoCancellation: boolean;
   autoGainControl: boolean;
   dtx: boolean;
+  highPassFrequency: number;
+  lowPassFrequency: number;
+  bitrate: number;
 }
 
 interface ScreenShareInfo {
@@ -64,9 +136,14 @@ interface VoiceState {
   // Audio settings
   audioSettings: AudioSettings;
 
+  // Per-user volume
+  participantVolumes: Record<string, number>;
+  participantTrackMap: Record<string, string>;
+
   // Screen share
   isScreenSharing: boolean;
   screenSharers: ScreenShareInfo[];
+  watchingScreenShare: string | null;
 
   // Participants in the current room (from LiveKit)
   participants: VoiceUser[];
@@ -79,8 +156,11 @@ interface VoiceState {
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
-  updateAudioSetting: (key: keyof AudioSettings, value: boolean) => void;
+  updateAudioSetting: (key: keyof AudioSettings, value: boolean | number) => void;
   toggleScreenShare: () => Promise<void>;
+  setParticipantVolume: (participantId: string, volume: number) => void;
+  watchScreenShare: (participantId: string) => void;
+  stopWatchingScreenShare: () => void;
 
   // Internal
   _updateParticipants: () => void;
@@ -93,6 +173,9 @@ const DEFAULT_SETTINGS: AudioSettings = {
   echoCancellation: true,
   autoGainControl: true,
   dtx: false,
+  highPassFrequency: 0,
+  lowPassFrequency: 0,
+  bitrate: 128_000,
 };
 
 export const useVoiceStore = create<VoiceState>((set, get) => ({
@@ -103,18 +186,19 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   isMuted: false,
   isDeafened: false,
   audioSettings: { ...DEFAULT_SETTINGS },
+  participantVolumes: {},
+  participantTrackMap: {},
   isScreenSharing: false,
   screenSharers: [],
+  watchingScreenShare: null,
   participants: [],
   channelParticipants: {},
 
   joinVoiceChannel: async (channelId: string) => {
     const { room: existingRoom, connectedChannelId, audioSettings } = get();
 
-    // Already in this channel
     if (connectedChannelId === channelId) return;
 
-    // Leave current voice channel first
     if (existingRoom) {
       get().leaveVoiceChannel();
     }
@@ -136,7 +220,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         },
         publishDefaults: {
           audioPreset: {
-            maxBitrate: 128_000,
+            maxBitrate: audioSettings.bitrate,
           },
           dtx: audioSettings.dtx,
           red: true,
@@ -156,29 +240,55 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       room.on(RoomEvent.TrackMuted, () => get()._updateParticipants());
       room.on(RoomEvent.TrackUnmuted, () => get()._updateParticipants());
 
-      // Attach remote audio tracks to DOM so they actually play
-      room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant) => {
+      // Attach remote audio tracks with Web Audio pipeline
+      room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
         if (track.kind === Track.Kind.Audio) {
           const el = track.attach();
           el.id = `lk-audio-${track.sid}`;
           document.body.appendChild(el);
+
+          // Create audio pipeline for filtering + volume
+          const { audioSettings: settings, participantVolumes, isDeafened } = get();
+          const volume = isDeafened ? 0 : (participantVolumes[participant.identity] ?? 1.0);
+          createAudioPipeline(el, track.sid!, settings, volume);
+
+          // Track participant → track mapping
+          set((state) => ({
+            participantTrackMap: {
+              ...state.participantTrackMap,
+              [participant.identity]: track.sid!,
+            },
+          }));
         }
         if (track.kind === Track.Kind.Video) {
           get()._updateScreenSharers();
         }
       });
-      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+
+      room.on(RoomEvent.TrackUnsubscribed, (track, _publication, participant) => {
+        if (track.kind === Track.Kind.Audio) {
+          destroyAudioPipeline(track.sid!);
+          if (participant) {
+            set((state) => {
+              const newMap = { ...state.participantTrackMap };
+              delete newMap[participant.identity];
+              return { participantTrackMap: newMap };
+            });
+          }
+        }
         track.detach().forEach((el) => el.remove());
         if (track.kind === Track.Kind.Video) {
           get()._updateScreenSharers();
         }
       });
+
       room.on(RoomEvent.LocalTrackPublished, () => get()._updateScreenSharers());
       room.on(RoomEvent.LocalTrackUnpublished, () => {
         set({ isScreenSharing: false });
         get()._updateScreenSharers();
       });
       room.on(RoomEvent.Disconnected, () => {
+        destroyAllPipelines();
         set({
           room: null,
           connectedChannelId: null,
@@ -187,6 +297,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           isDeafened: false,
           isScreenSharing: false,
           screenSharers: [],
+          participantTrackMap: {},
+          watchingScreenShare: null,
         });
       });
 
@@ -201,13 +313,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         isDeafened: false,
         isScreenSharing: false,
         screenSharers: [],
+        participantTrackMap: {},
+        watchingScreenShare: null,
       });
 
       get()._updateParticipants();
 
       playJoinSound();
 
-      // Notify server via WebSocket
       gateway.send({ type: "voice_state_update", channelId, action: "join" });
     } catch (err) {
       set({
@@ -223,8 +336,10 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     playLeaveSound();
 
+    // Destroy all audio pipelines
+    destroyAllPipelines();
+
     if (room) {
-      // Clean up any attached audio/video elements
       for (const participant of room.remoteParticipants.values()) {
         for (const publication of participant.audioTrackPublications.values()) {
           if (publication.track) {
@@ -243,11 +358,10 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       gateway.send({ type: "voice_state_update", channelId: connectedChannelId, action: "leave" });
     }
 
-    // Optimistically remove self from sidebar participants
     const updatedParticipants = { ...channelParticipants };
     if (connectedChannelId && updatedParticipants[connectedChannelId] && localId) {
       updatedParticipants[connectedChannelId] = updatedParticipants[connectedChannelId].filter(
-        (p) => p.userId !== localId
+        (p) => p.userId !== localId,
       );
     }
 
@@ -261,6 +375,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       connecting: false,
       isScreenSharing: false,
       screenSharers: [],
+      participantTrackMap: {},
+      watchingScreenShare: null,
     });
   },
 
@@ -272,15 +388,25 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   },
 
   toggleDeafen: () => {
-    const { room, isDeafened, isMuted } = get();
+    const { room, isDeafened, isMuted, participantVolumes, participantTrackMap } = get();
     if (!room) return;
 
     const newDeafened = !isDeafened;
 
-    // Mute/unmute all remote audio elements in the DOM
-    document.querySelectorAll<HTMLAudioElement>('audio[id^="lk-audio-"]').forEach((el) => {
-      el.muted = newDeafened;
-    });
+    if (newDeafened) {
+      // Mute all audio via gain nodes
+      for (const pipeline of audioPipelines.values()) {
+        pipeline.gain.gain.value = 0;
+      }
+    } else {
+      // Restore per-user volumes
+      for (const [identity, trackSid] of Object.entries(participantTrackMap)) {
+        const pipeline = audioPipelines.get(trackSid);
+        if (pipeline) {
+          pipeline.gain.gain.value = participantVolumes[identity] ?? 1.0;
+        }
+      }
+    }
 
     if (newDeafened && !isMuted) {
       room.localParticipant.setMicrophoneEnabled(false);
@@ -290,16 +416,50 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
   },
 
-  updateAudioSetting: (key: keyof AudioSettings, value: boolean) => {
+  setParticipantVolume: (participantId: string, volume: number) => {
+    const { participantTrackMap, isDeafened } = get();
+
+    set((state) => ({
+      participantVolumes: {
+        ...state.participantVolumes,
+        [participantId]: volume,
+      },
+    }));
+
+    if (isDeafened) return;
+
+    const trackSid = participantTrackMap[participantId];
+    if (trackSid) {
+      const pipeline = audioPipelines.get(trackSid);
+      if (pipeline) {
+        pipeline.gain.gain.value = volume;
+      }
+    }
+  },
+
+  updateAudioSetting: (key: keyof AudioSettings, value: boolean | number) => {
     const { room, audioSettings } = get();
-    const newSettings = { ...audioSettings, [key]: value };
+    const newSettings = { ...audioSettings, [key]: value } as AudioSettings;
     set({ audioSettings: newSettings });
+
+    // Apply filter changes instantly to all pipelines
+    if (key === "highPassFrequency") {
+      for (const pipeline of audioPipelines.values()) {
+        pipeline.highPass.frequency.value = (value as number) > 0 ? (value as number) : 0;
+      }
+      return;
+    }
+    if (key === "lowPassFrequency") {
+      for (const pipeline of audioPipelines.values()) {
+        pipeline.lowPass.frequency.value = (value as number) > 0 ? (value as number) : 24000;
+      }
+      return;
+    }
 
     if (!room) return;
 
-    // Apply DTX change immediately (requires republishing)
-    if (key === "dtx") {
-      // DTX applies to next publish, so re-enable mic to pick it up
+    // Bitrate change requires republishing
+    if (key === "bitrate") {
       const micEnabled = room.localParticipant.isMicrophoneEnabled;
       if (micEnabled) {
         room.localParticipant.setMicrophoneEnabled(false).then(() => {
@@ -310,10 +470,11 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           });
         });
       }
+      return;
     }
 
-    // Apply audio processing changes immediately
-    if (key === "noiseSuppression" || key === "echoCancellation" || key === "autoGainControl") {
+    // DTX or audio processing changes require republishing
+    if (key === "dtx" || key === "noiseSuppression" || key === "echoCancellation" || key === "autoGainControl") {
       const micEnabled = room.localParticipant.isMicrophoneEnabled;
       if (micEnabled) {
         room.localParticipant.setMicrophoneEnabled(false).then(() => {
@@ -344,10 +505,17 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       }
       get()._updateScreenSharers();
     } catch (err) {
-      // User cancelled screen share picker — not an error
       if (err instanceof Error && err.message.includes("Permission denied")) return;
       console.error("Screen share error:", err);
     }
+  },
+
+  watchScreenShare: (participantId: string) => {
+    set({ watchingScreenShare: participantId });
+  },
+
+  stopWatchingScreenShare: () => {
+    set({ watchingScreenShare: null });
   },
 
   _updateParticipants: () => {
@@ -355,7 +523,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     if (!room) return;
 
     const activeSpeakerIds = new Set(
-      room.activeSpeakers.map((s) => s.identity)
+      room.activeSpeakers.map((s) => s.identity),
     );
 
     const users: VoiceUser[] = [];
@@ -379,7 +547,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   },
 
   _updateScreenSharers: () => {
-    const { room } = get();
+    const { room, screenSharers: previousSharers, watchingScreenShare } = get();
     if (!room) return;
 
     const sharers: ScreenShareInfo[] = [];
@@ -408,7 +576,38 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       }
     }
 
-    set({ screenSharers: sharers });
+    // Detect new/removed screen sharers for sounds
+    const prevIds = new Set(previousSharers.map((s) => s.participantId));
+    const newIds = new Set(sharers.map((s) => s.participantId));
+
+    let playedStart = false;
+    for (const s of sharers) {
+      if (!prevIds.has(s.participantId)) {
+        if (!playedStart) {
+          playScreenShareStartSound();
+          playedStart = true;
+        }
+      }
+    }
+
+    let playedStop = false;
+    let clearWatching = false;
+    for (const s of previousSharers) {
+      if (!newIds.has(s.participantId)) {
+        if (!playedStop) {
+          playScreenShareStopSound();
+          playedStop = true;
+        }
+        if (watchingScreenShare === s.participantId) {
+          clearWatching = true;
+        }
+      }
+    }
+
+    set({
+      screenSharers: sharers,
+      ...(clearWatching ? { watchingScreenShare: null } : {}),
+    });
   },
 
   _setChannelParticipants: (channelId: string, participants: VoiceParticipant[]) => {
@@ -427,3 +626,41 @@ gateway.on((event) => {
     useVoiceStore.getState()._setChannelParticipants(event.channelId, event.participants);
   }
 });
+
+// ── BroadcastChannel: publish voice/screen share state to popout windows ──
+
+// Track the LiveKit URL for popout connections
+let lastLivekitUrl: string | null = null;
+let lastLivekitToken: string | null = null;
+
+if (!isPopout()) {
+  // Store LiveKit connection info when joining
+  const origJoin = useVoiceStore.getState().joinVoiceChannel;
+  const wrappedJoin = async (channelId: string) => {
+    await origJoin(channelId);
+    // After joining, fetch a fresh token for popout use
+    try {
+      const { token, url } = await api.getVoiceToken(channelId);
+      lastLivekitUrl = url;
+      lastLivekitToken = token;
+    } catch {
+      // Non-critical
+    }
+  };
+  useVoiceStore.setState({ joinVoiceChannel: wrappedJoin });
+
+  // Broadcast voice state on changes
+  useVoiceStore.subscribe((state) => {
+    const watchedSharer = state.screenSharers.find(
+      (s) => s.participantId === state.watchingScreenShare,
+    );
+    broadcastState({
+      type: "voice-state",
+      livekitUrl: state.connectedChannelId ? lastLivekitUrl : null,
+      livekitToken: state.connectedChannelId ? lastLivekitToken : null,
+      watchingScreenShare: state.watchingScreenShare,
+      screenSharerParticipantId: watchedSharer?.participantId ?? null,
+      screenSharerUsername: watchedSharer?.username ?? null,
+    });
+  });
+}

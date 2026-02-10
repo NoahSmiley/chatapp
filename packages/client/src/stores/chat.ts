@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Server, Channel, Message } from "@flux/shared";
 import * as api from "../lib/api.js";
 import { gateway } from "../lib/ws.js";
+import { broadcastState, onCommand, isPopout } from "../lib/broadcast.js";
 
 interface ChatState {
   servers: (Server & { role: string })[];
@@ -141,3 +142,25 @@ gateway.on((event) => {
       break;
   }
 });
+
+// ── BroadcastChannel: publish state to popout windows ──
+
+if (!isPopout()) {
+  // Broadcast chat state on every change
+  useChatStore.subscribe((state) => {
+    const channel = state.channels.find((c) => c.id === state.activeChannelId);
+    broadcastState({
+      type: "chat-state",
+      messages: state.messages,
+      activeChannelId: state.activeChannelId,
+      channelName: channel?.name ?? null,
+    });
+  });
+
+  // Listen for commands from popout windows
+  onCommand((cmd) => {
+    if (cmd.type === "send-message") {
+      useChatStore.getState().sendMessage(cmd.content);
+    }
+  });
+}

@@ -5,15 +5,15 @@ import { useChatStore } from "../stores/chat.js";
 
 function ScreenShareViewer() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const { room, screenSharers } = useVoiceStore();
+  const { room, watchingScreenShare, screenSharers, stopWatchingScreenShare } = useVoiceStore();
+
+  const sharer = screenSharers.find((s) => s.participantId === watchingScreenShare);
 
   useEffect(() => {
-    if (!room || !videoRef.current || screenSharers.length === 0) return;
+    if (!room || !videoRef.current || !sharer) return;
 
-    const sharer = screenSharers[0];
     let track: Track | undefined;
 
-    // Check if it's our own screen share
     if (sharer.participantId === room.localParticipant.identity) {
       for (const pub of room.localParticipant.videoTrackPublications.values()) {
         if (pub.source === Track.Source.ScreenShare && pub.track) {
@@ -22,7 +22,6 @@ function ScreenShareViewer() {
         }
       }
     } else {
-      // Remote participant
       const participant = room.remoteParticipants.get(sharer.participantId);
       if (participant) {
         for (const pub of participant.videoTrackPublications.values()) {
@@ -43,16 +42,47 @@ function ScreenShareViewer() {
         track.detach(videoRef.current);
       }
     };
-  }, [room, screenSharers]);
+  }, [room, sharer, watchingScreenShare]);
 
-  if (screenSharers.length === 0) return null;
+  if (!sharer) return null;
 
   return (
     <div className="screen-share-viewer">
-      <div className="screen-share-label">
-        {screenSharers[0].username}'s screen
+      <div className="screen-share-header">
+        <span className="screen-share-label">
+          {sharer.username}'s screen
+        </span>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button className="btn-small popout-btn" onClick={() => window.flux?.openPopoutWindow("screenshare")} title="Pop out">
+            &#x2197;
+          </button>
+          <button className="btn-small" onClick={stopWatchingScreenShare}>
+            Stop Watching
+          </button>
+        </div>
       </div>
       <video ref={videoRef} autoPlay playsInline className="screen-share-video" />
+    </div>
+  );
+}
+
+function ScreenShareNotifications() {
+  const { screenSharers, watchingScreenShare, watchScreenShare } = useVoiceStore();
+
+  const unwatched = screenSharers.filter((s) => s.participantId !== watchingScreenShare);
+
+  if (unwatched.length === 0) return null;
+
+  return (
+    <div className="screen-share-notifications">
+      {unwatched.map((sharer) => (
+        <div key={sharer.participantId} className="screen-share-notification">
+          <span>{sharer.username} is sharing their screen</span>
+          <button className="btn-small" onClick={() => watchScreenShare(sharer.participantId)}>
+            Watch
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -60,7 +90,7 @@ function ScreenShareViewer() {
 function AudioSettingsPanel() {
   const { audioSettings, updateAudioSetting } = useVoiceStore();
 
-  const settings = [
+  const booleanSettings = [
     { key: "noiseSuppression" as const, label: "Noise Suppression" },
     { key: "echoCancellation" as const, label: "Echo Cancellation" },
     { key: "autoGainControl" as const, label: "Auto Gain Control" },
@@ -69,16 +99,72 @@ function AudioSettingsPanel() {
 
   return (
     <div className="audio-settings">
-      {settings.map(({ key, label }) => (
+      {booleanSettings.map(({ key, label }) => (
         <label key={key} className="audio-setting-row">
           <span>{label}</span>
           <input
             type="checkbox"
-            checked={audioSettings[key]}
+            checked={audioSettings[key] as boolean}
             onChange={(e) => updateAudioSetting(key, e.target.checked)}
           />
         </label>
       ))}
+
+      <div className="audio-settings-divider" />
+
+      <div className="audio-setting-slider-row">
+        <div className="audio-setting-slider-label">
+          <span>High-Pass Filter</span>
+          <span className="audio-setting-value">
+            {audioSettings.highPassFrequency === 0 ? "Off" : `${audioSettings.highPassFrequency} Hz`}
+          </span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="2000"
+          step="10"
+          value={audioSettings.highPassFrequency}
+          onChange={(e) => updateAudioSetting("highPassFrequency", parseInt(e.target.value))}
+          className="settings-slider"
+        />
+      </div>
+
+      <div className="audio-setting-slider-row">
+        <div className="audio-setting-slider-label">
+          <span>Low-Pass Filter</span>
+          <span className="audio-setting-value">
+            {audioSettings.lowPassFrequency === 0 ? "Off" : `${audioSettings.lowPassFrequency} Hz`}
+          </span>
+        </div>
+        <input
+          type="range"
+          min="0"
+          max="20000"
+          step="100"
+          value={audioSettings.lowPassFrequency}
+          onChange={(e) => updateAudioSetting("lowPassFrequency", parseInt(e.target.value))}
+          className="settings-slider"
+        />
+      </div>
+
+      <div className="audio-setting-slider-row">
+        <div className="audio-setting-slider-label">
+          <span>Bitrate</span>
+          <span className="audio-setting-value">
+            {audioSettings.bitrate / 1000} kbps
+          </span>
+        </div>
+        <input
+          type="range"
+          min="8000"
+          max="256000"
+          step="8000"
+          value={audioSettings.bitrate}
+          onChange={(e) => updateAudioSetting("bitrate", parseInt(e.target.value))}
+          className="settings-slider"
+        />
+      </div>
     </div>
   );
 }
@@ -86,6 +172,7 @@ function AudioSettingsPanel() {
 export function VoiceChannelView() {
   const { channels, activeChannelId } = useChatStore();
   const {
+    room,
     connectedChannelId,
     connecting,
     connectionError,
@@ -93,12 +180,14 @@ export function VoiceChannelView() {
     isMuted,
     isDeafened,
     isScreenSharing,
-    screenSharers,
+    watchingScreenShare,
+    participantVolumes,
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleMute,
     toggleDeafen,
     toggleScreenShare,
+    setParticipantVolume,
   } = useVoiceStore();
 
   const [showSettings, setShowSettings] = useState(false);
@@ -138,7 +227,8 @@ export function VoiceChannelView() {
 
       {isConnected && (
         <>
-          {screenSharers.length > 0 && <ScreenShareViewer />}
+          <ScreenShareNotifications />
+          {watchingScreenShare && <ScreenShareViewer />}
 
           <div className="voice-participants">
             {participants.map((user) => (
@@ -151,6 +241,22 @@ export function VoiceChannelView() {
                 </div>
                 <span className="voice-participant-name">{user.username}</span>
                 {user.speaking && <span className="voice-speaking-indicator" />}
+                {user.userId !== room?.localParticipant?.identity && (
+                  <div className="participant-volume">
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      value={Math.round((participantVolumes[user.userId] ?? 1.0) * 100)}
+                      onChange={(e) => setParticipantVolume(user.userId, parseInt(e.target.value) / 100)}
+                      className="volume-slider"
+                      title={`Volume: ${Math.round((participantVolumes[user.userId] ?? 1.0) * 100)}%`}
+                    />
+                    <span className="volume-label">
+                      {Math.round((participantVolumes[user.userId] ?? 1.0) * 100)}%
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>

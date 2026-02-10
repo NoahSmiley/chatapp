@@ -1,10 +1,17 @@
-import { app, BrowserWindow, desktopCapturer, session } from "electron";
+import { app, BrowserWindow, desktopCapturer, session, ipcMain } from "electron";
 import path from "path";
 
 const isDev = !app.isPackaged;
+let mainWindow: BrowserWindow | null = null;
+
+// Pending screen share callback from setDisplayMediaRequestHandler
+let pendingScreenShareCallback: ((result: { video?: unknown }) => void) | null = null;
+
+// Pop-out windows
+const popoutWindows = new Map<string, BrowserWindow>();
 
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 940,
@@ -23,24 +30,111 @@ function createWindow() {
     },
   });
 
-  // Enable screen sharing: handle getDisplayMedia() requests
+  // Screen sharing: show picker instead of auto-granting
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
-    const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
-    // Grant first source (entire screen) — Chromium shows its own picker
-    if (sources.length > 0) {
-      callback({ video: sources[0] });
-    } else {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen", "window"],
+        thumbnailSize: { width: 320, height: 180 },
+      });
+
+      if (sources.length === 0) {
+        callback({});
+        return;
+      }
+
+      const sourceList = sources.map((s) => ({
+        id: s.id,
+        name: s.name,
+        thumbnail: s.thumbnail.toDataURL(),
+        appIcon: s.appIcon?.toDataURL() ?? null,
+      }));
+
+      pendingScreenShareCallback = callback as (result: { video?: unknown }) => void;
+      mainWindow?.webContents.send("screen-share-sources", sourceList);
+    } catch {
       callback({});
     }
   });
 
   if (isDev) {
-    win.loadURL("http://localhost:5173");
-    win.webContents.openDevTools();
+    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, "../renderer/index.html"));
+    mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 }
+
+// Screen share picker IPC
+ipcMain.on("screen-share-select", (_event, sourceId: string) => {
+  if (!pendingScreenShareCallback) return;
+  const cb = pendingScreenShareCallback;
+  pendingScreenShareCallback = null;
+
+  desktopCapturer.getSources({ types: ["screen", "window"] }).then((sources) => {
+    const selected = sources.find((s) => s.id === sourceId);
+    if (selected) {
+      cb({ video: selected });
+    } else {
+      cb({});
+    }
+  });
+});
+
+ipcMain.on("screen-share-cancel", () => {
+  if (pendingScreenShareCallback) {
+    pendingScreenShareCallback({});
+    pendingScreenShareCallback = null;
+  }
+});
+
+// Pop-out window IPC
+ipcMain.handle("open-popout-window", (_event, type: "chat" | "screenshare") => {
+  if (popoutWindows.has(type)) {
+    popoutWindows.get(type)!.focus();
+    return;
+  }
+
+  const baseUrl = isDev ? "http://localhost:5173" : `file://${path.join(__dirname, "../renderer/index.html")}`;
+  const url = `${baseUrl}?popout=${type}`;
+
+  const popout = new BrowserWindow({
+    width: type === "chat" ? 500 : 960,
+    height: type === "chat" ? 700 : 600,
+    minWidth: 400,
+    minHeight: 300,
+    title: type === "chat" ? "Flux - Chat" : "Flux - Screen Share",
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: "#0a0a0a",
+      symbolColor: "#e8e8e8",
+      height: 36,
+    },
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "preload.js"),
+    },
+    parent: mainWindow ?? undefined,
+  });
+
+  popout.loadURL(url);
+
+  popout.on("closed", () => {
+    popoutWindows.delete(type);
+    mainWindow?.webContents.send("popout-closed", type);
+  });
+
+  popoutWindows.set(type, popout);
+});
+
+ipcMain.handle("close-popout-window", (_event, type: "chat" | "screenshare") => {
+  const win = popoutWindows.get(type);
+  if (win) {
+    win.close();
+    popoutWindows.delete(type);
+  }
+});
 
 app.whenReady().then(createWindow);
 

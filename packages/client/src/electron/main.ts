@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, desktopCapturer, session } from "electron";
 import path from "path";
 
 const isDev = !app.isPackaged;
@@ -21,6 +21,17 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
     },
+  });
+
+  // Enable screen sharing: handle getDisplayMedia() requests
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
+    // Grant first source (entire screen) — Chromium shows its own picker
+    if (sources.length > 0) {
+      callback({ video: sources[0] });
+    } else {
+      callback({});
+    }
   });
 
   if (isDev) {

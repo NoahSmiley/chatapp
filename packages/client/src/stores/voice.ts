@@ -38,6 +38,18 @@ interface VoiceUser {
   speaking: boolean;
 }
 
+interface AudioSettings {
+  noiseSuppression: boolean;
+  echoCancellation: boolean;
+  autoGainControl: boolean;
+  dtx: boolean;
+}
+
+interface ScreenShareInfo {
+  participantId: string;
+  username: string;
+}
+
 interface VoiceState {
   // Connection state
   room: Room | null;
@@ -48,6 +60,13 @@ interface VoiceState {
   // Local user controls
   isMuted: boolean;
   isDeafened: boolean;
+
+  // Audio settings
+  audioSettings: AudioSettings;
+
+  // Screen share
+  isScreenSharing: boolean;
+  screenSharers: ScreenShareInfo[];
 
   // Participants in the current room (from LiveKit)
   participants: VoiceUser[];
@@ -60,11 +79,21 @@ interface VoiceState {
   leaveVoiceChannel: () => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
+  updateAudioSetting: (key: keyof AudioSettings, value: boolean) => void;
+  toggleScreenShare: () => Promise<void>;
 
   // Internal
   _updateParticipants: () => void;
+  _updateScreenSharers: () => void;
   _setChannelParticipants: (channelId: string, participants: VoiceParticipant[]) => void;
 }
+
+const DEFAULT_SETTINGS: AudioSettings = {
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: true,
+  dtx: false,
+};
 
 export const useVoiceStore = create<VoiceState>((set, get) => ({
   room: null,
@@ -73,11 +102,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   connectionError: null,
   isMuted: false,
   isDeafened: false,
+  audioSettings: { ...DEFAULT_SETTINGS },
+  isScreenSharing: false,
+  screenSharers: [],
   participants: [],
   channelParticipants: {},
 
   joinVoiceChannel: async (channelId: string) => {
-    const { room: existingRoom, connectedChannelId } = get();
+    const { room: existingRoom, connectedChannelId, audioSettings } = get();
 
     // Already in this channel
     if (connectedChannelId === channelId) return;
@@ -96,14 +128,30 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         adaptiveStream: true,
         dynacast: true,
         audioCaptureDefaults: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: audioSettings.echoCancellation,
+          noiseSuppression: audioSettings.noiseSuppression,
+          autoGainControl: audioSettings.autoGainControl,
+          sampleRate: 48000,
+          channelCount: 2,
+        },
+        publishDefaults: {
+          audioPreset: {
+            maxBitrate: 128_000,
+          },
+          dtx: audioSettings.dtx,
+          red: true,
+          screenShareEncoding: {
+            maxBitrate: 3_000_000,
+            maxFramerate: 30,
+          },
         },
       });
 
       room.on(RoomEvent.ParticipantConnected, () => get()._updateParticipants());
-      room.on(RoomEvent.ParticipantDisconnected, () => get()._updateParticipants());
+      room.on(RoomEvent.ParticipantDisconnected, () => {
+        get()._updateParticipants();
+        get()._updateScreenSharers();
+      });
       room.on(RoomEvent.ActiveSpeakersChanged, () => get()._updateParticipants());
       room.on(RoomEvent.TrackMuted, () => get()._updateParticipants());
       room.on(RoomEvent.TrackUnmuted, () => get()._updateParticipants());
@@ -115,9 +163,20 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           el.id = `lk-audio-${track.sid}`;
           document.body.appendChild(el);
         }
+        if (track.kind === Track.Kind.Video) {
+          get()._updateScreenSharers();
+        }
       });
       room.on(RoomEvent.TrackUnsubscribed, (track) => {
         track.detach().forEach((el) => el.remove());
+        if (track.kind === Track.Kind.Video) {
+          get()._updateScreenSharers();
+        }
+      });
+      room.on(RoomEvent.LocalTrackPublished, () => get()._updateScreenSharers());
+      room.on(RoomEvent.LocalTrackUnpublished, () => {
+        set({ isScreenSharing: false });
+        get()._updateScreenSharers();
       });
       room.on(RoomEvent.Disconnected, () => {
         set({
@@ -126,6 +185,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           participants: [],
           isMuted: false,
           isDeafened: false,
+          isScreenSharing: false,
+          screenSharers: [],
         });
       });
 
@@ -138,6 +199,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         connecting: false,
         isMuted: false,
         isDeafened: false,
+        isScreenSharing: false,
+        screenSharers: [],
       });
 
       get()._updateParticipants();
@@ -161,9 +224,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     playLeaveSound();
 
     if (room) {
-      // Clean up any attached audio elements
+      // Clean up any attached audio/video elements
       for (const participant of room.remoteParticipants.values()) {
         for (const publication of participant.audioTrackPublications.values()) {
+          if (publication.track) {
+            publication.track.detach().forEach((el) => el.remove());
+          }
+        }
+        for (const publication of participant.videoTrackPublications.values()) {
           if (publication.track) {
             publication.track.detach().forEach((el) => el.remove());
           }
@@ -176,7 +244,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
 
     // Optimistically remove self from sidebar participants
-    // (in case the server broadcast doesn't arrive due to WS reconnect)
     const updatedParticipants = { ...channelParticipants };
     if (connectedChannelId && updatedParticipants[connectedChannelId] && localId) {
       updatedParticipants[connectedChannelId] = updatedParticipants[connectedChannelId].filter(
@@ -192,13 +259,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       isMuted: false,
       isDeafened: false,
       connecting: false,
+      isScreenSharing: false,
+      screenSharers: [],
     });
   },
 
   toggleMute: () => {
     const { room, isMuted } = get();
     if (!room) return;
-    // If muted, enable mic; if unmuted, disable mic
     room.localParticipant.setMicrophoneEnabled(isMuted);
     set({ isMuted: !isMuted });
   },
@@ -209,21 +277,76 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     const newDeafened = !isDeafened;
 
-    // Mute/unmute all remote audio tracks
-    for (const participant of room.remoteParticipants.values()) {
-      for (const publication of participant.audioTrackPublications.values()) {
-        if (publication.track) {
-          publication.track.setEnabled(!newDeafened);
-        }
-      }
-    }
+    // Mute/unmute all remote audio elements in the DOM
+    document.querySelectorAll<HTMLAudioElement>('audio[id^="lk-audio-"]').forEach((el) => {
+      el.muted = newDeafened;
+    });
 
-    // Deafening auto-mutes (Discord convention)
     if (newDeafened && !isMuted) {
       room.localParticipant.setMicrophoneEnabled(false);
       set({ isDeafened: newDeafened, isMuted: true });
     } else {
       set({ isDeafened: newDeafened });
+    }
+  },
+
+  updateAudioSetting: (key: keyof AudioSettings, value: boolean) => {
+    const { room, audioSettings } = get();
+    const newSettings = { ...audioSettings, [key]: value };
+    set({ audioSettings: newSettings });
+
+    if (!room) return;
+
+    // Apply DTX change immediately (requires republishing)
+    if (key === "dtx") {
+      // DTX applies to next publish, so re-enable mic to pick it up
+      const micEnabled = room.localParticipant.isMicrophoneEnabled;
+      if (micEnabled) {
+        room.localParticipant.setMicrophoneEnabled(false).then(() => {
+          room.localParticipant.setMicrophoneEnabled(true, {
+            echoCancellation: newSettings.echoCancellation,
+            noiseSuppression: newSettings.noiseSuppression,
+            autoGainControl: newSettings.autoGainControl,
+          });
+        });
+      }
+    }
+
+    // Apply audio processing changes immediately
+    if (key === "noiseSuppression" || key === "echoCancellation" || key === "autoGainControl") {
+      const micEnabled = room.localParticipant.isMicrophoneEnabled;
+      if (micEnabled) {
+        room.localParticipant.setMicrophoneEnabled(false).then(() => {
+          room.localParticipant.setMicrophoneEnabled(true, {
+            echoCancellation: newSettings.echoCancellation,
+            noiseSuppression: newSettings.noiseSuppression,
+            autoGainControl: newSettings.autoGainControl,
+          });
+        });
+      }
+    }
+  },
+
+  toggleScreenShare: async () => {
+    const { room, isScreenSharing } = get();
+    if (!room) return;
+
+    try {
+      if (isScreenSharing) {
+        await room.localParticipant.setScreenShareEnabled(false);
+        set({ isScreenSharing: false });
+      } else {
+        await room.localParticipant.setScreenShareEnabled(true, {
+          audio: true,
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
+        });
+        set({ isScreenSharing: true });
+      }
+      get()._updateScreenSharers();
+    } catch (err) {
+      // User cancelled screen share picker — not an error
+      if (err instanceof Error && err.message.includes("Permission denied")) return;
+      console.error("Screen share error:", err);
     }
   },
 
@@ -237,7 +360,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     const users: VoiceUser[] = [];
 
-    // Local participant
     const local = room.localParticipant;
     users.push({
       userId: local.identity,
@@ -245,7 +367,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       speaking: activeSpeakerIds.has(local.identity),
     });
 
-    // Remote participants
     for (const participant of room.remoteParticipants.values()) {
       users.push({
         userId: participant.identity,
@@ -255,6 +376,39 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
 
     set({ participants: users });
+  },
+
+  _updateScreenSharers: () => {
+    const { room } = get();
+    if (!room) return;
+
+    const sharers: ScreenShareInfo[] = [];
+
+    // Check local
+    for (const pub of room.localParticipant.videoTrackPublications.values()) {
+      if (pub.source === Track.Source.ScreenShare) {
+        sharers.push({
+          participantId: room.localParticipant.identity,
+          username: room.localParticipant.name ?? room.localParticipant.identity.slice(0, 8),
+        });
+        break;
+      }
+    }
+
+    // Check remote
+    for (const participant of room.remoteParticipants.values()) {
+      for (const pub of participant.videoTrackPublications.values()) {
+        if (pub.source === Track.Source.ScreenShare) {
+          sharers.push({
+            participantId: participant.identity,
+            username: participant.name ?? participant.identity.slice(0, 8),
+          });
+          break;
+        }
+      }
+    }
+
+    set({ screenSharers: sharers });
   },
 
   _setChannelParticipants: (channelId: string, participants: VoiceParticipant[]) => {

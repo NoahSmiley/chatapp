@@ -90,6 +90,7 @@ sqlite.exec(`
     server_id TEXT NOT NULL REFERENCES "servers"(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     type TEXT NOT NULL,
+    bitrate INTEGER,
     created_at TEXT NOT NULL
   );
 
@@ -111,6 +112,13 @@ sqlite.exec(`
     PRIMARY KEY (user_id, server_id)
   );
 `);
+
+// Add bitrate column if missing (migration for existing databases)
+try {
+  sqlite.exec(`ALTER TABLE "channels" ADD COLUMN bitrate INTEGER`);
+} catch {
+  // Column already exists
+}
 
 export { sqlite };
 export const db = drizzle(sqlite, { schema });

@@ -99,6 +99,32 @@ function destroyAllPipelines() {
   }
 }
 
+// ── Audio Level Polling ──
+
+let audioLevelInterval: ReturnType<typeof setInterval> | null = null;
+
+function startAudioLevelPolling() {
+  stopAudioLevelPolling();
+  audioLevelInterval = setInterval(() => {
+    const { room } = useVoiceStore.getState();
+    if (!room) return;
+
+    const levels: Record<string, number> = {};
+    levels[room.localParticipant.identity] = room.localParticipant.audioLevel ?? 0;
+    for (const p of room.remoteParticipants.values()) {
+      levels[p.identity] = p.audioLevel ?? 0;
+    }
+    useVoiceStore.setState({ audioLevels: levels });
+  }, 50); // 20fps for smooth visuals
+}
+
+function stopAudioLevelPolling() {
+  if (audioLevelInterval) {
+    clearInterval(audioLevelInterval);
+    audioLevelInterval = null;
+  }
+}
+
 // ── Types ──
 
 interface VoiceUser {
@@ -114,7 +140,6 @@ interface AudioSettings {
   dtx: boolean;
   highPassFrequency: number;
   lowPassFrequency: number;
-  bitrate: number;
 }
 
 interface ScreenShareInfo {
@@ -140,6 +165,9 @@ interface VoiceState {
   participantVolumes: Record<string, number>;
   participantTrackMap: Record<string, string>;
 
+  // Audio levels (0-1 per participant, updated at 20fps)
+  audioLevels: Record<string, number>;
+
   // Screen share
   isScreenSharing: boolean;
   screenSharers: ScreenShareInfo[];
@@ -157,6 +185,7 @@ interface VoiceState {
   toggleMute: () => void;
   toggleDeafen: () => void;
   updateAudioSetting: (key: keyof AudioSettings, value: boolean | number) => void;
+  applyBitrate: (bitrate: number) => void;
   toggleScreenShare: () => Promise<void>;
   setParticipantVolume: (participantId: string, volume: number) => void;
   watchScreenShare: (participantId: string) => void;
@@ -175,8 +204,9 @@ const DEFAULT_SETTINGS: AudioSettings = {
   dtx: false,
   highPassFrequency: 0,
   lowPassFrequency: 0,
-  bitrate: 128_000,
 };
+
+const DEFAULT_BITRATE = 128_000;
 
 export const useVoiceStore = create<VoiceState>((set, get) => ({
   room: null,
@@ -188,6 +218,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   audioSettings: { ...DEFAULT_SETTINGS },
   participantVolumes: {},
   participantTrackMap: {},
+  audioLevels: {},
   isScreenSharing: false,
   screenSharers: [],
   watchingScreenShare: null,
@@ -208,6 +239,12 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     try {
       const { token, url } = await api.getVoiceToken(channelId);
 
+      // Get channel bitrate from chat store
+      const { useChatStore } = await import("./chat.js");
+      const chatState = useChatStore.getState();
+      const channel = chatState.channels.find((c) => c.id === channelId);
+      const channelBitrate = channel?.bitrate ?? DEFAULT_BITRATE;
+
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
@@ -220,7 +257,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
         },
         publishDefaults: {
           audioPreset: {
-            maxBitrate: audioSettings.bitrate,
+            maxBitrate: channelBitrate,
           },
           dtx: audioSettings.dtx,
           red: true,
@@ -289,6 +326,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       });
       room.on(RoomEvent.Disconnected, () => {
         destroyAllPipelines();
+        stopAudioLevelPolling();
         set({
           room: null,
           connectedChannelId: null,
@@ -298,6 +336,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
           isScreenSharing: false,
           screenSharers: [],
           participantTrackMap: {},
+          audioLevels: {},
           watchingScreenShare: null,
         });
       });
@@ -319,6 +358,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
       get()._updateParticipants();
       get()._updateScreenSharers();
+      startAudioLevelPolling();
 
       playJoinSound();
 
@@ -336,6 +376,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     const localId = room?.localParticipant?.identity;
 
     playLeaveSound();
+    stopAudioLevelPolling();
 
     // Destroy all audio pipelines
     destroyAllPipelines();
@@ -377,6 +418,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       isScreenSharing: false,
       screenSharers: [],
       participantTrackMap: {},
+      audioLevels: {},
       watchingScreenShare: null,
     });
   },
@@ -459,21 +501,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     if (!room) return;
 
-    // Bitrate change requires republishing
-    if (key === "bitrate") {
-      const micEnabled = room.localParticipant.isMicrophoneEnabled;
-      if (micEnabled) {
-        room.localParticipant.setMicrophoneEnabled(false).then(() => {
-          room.localParticipant.setMicrophoneEnabled(true, {
-            echoCancellation: newSettings.echoCancellation,
-            noiseSuppression: newSettings.noiseSuppression,
-            autoGainControl: newSettings.autoGainControl,
-          });
-        });
-      }
-      return;
-    }
-
     // DTX or audio processing changes require republishing
     if (key === "dtx" || key === "noiseSuppression" || key === "echoCancellation" || key === "autoGainControl") {
       const micEnabled = room.localParticipant.isMicrophoneEnabled;
@@ -485,6 +512,23 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
             autoGainControl: newSettings.autoGainControl,
           });
         });
+      }
+    }
+  },
+
+  applyBitrate: (bitrate: number) => {
+    const { room } = get();
+    if (!room) return;
+
+    // Apply bitrate directly via RTCRtpSender for live change
+    for (const pub of room.localParticipant.audioTrackPublications.values()) {
+      const sender = pub.track?.sender;
+      if (sender) {
+        const params = sender.getParameters();
+        if (params.encodings && params.encodings.length > 0) {
+          params.encodings[0].maxBitrate = bitrate;
+          sender.setParameters(params);
+        }
       }
     }
   },

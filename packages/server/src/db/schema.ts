@@ -115,6 +115,7 @@ export const channels = sqliteTable("channels", {
     .references(() => servers.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   type: text("type").notNull(), // 'text' | 'voice'
+  bitrate: integer("bitrate"), // voice channels only, in bps (null = 128000)
   createdAt: ts("created_at"),
 });
 

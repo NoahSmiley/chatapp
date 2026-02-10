@@ -4,7 +4,7 @@ import { db } from "../db/index.js";
 import { servers, channels, memberships } from "../db/schema.js";
 import { nanoid } from "nanoid";
 import { validateServerName, validateChannelName } from "@flux/shared";
-import type { CreateServerRequest, CreateChannelRequest } from "@flux/shared";
+import type { CreateServerRequest, CreateChannelRequest, UpdateChannelRequest } from "@flux/shared";
 import { requireAuth } from "../middleware/auth.js";
 
 export async function serverRoutes(app: FastifyInstance) {
@@ -132,10 +132,81 @@ export async function serverRoutes(app: FastifyInstance) {
           serverId,
           name: request.body.name.trim(),
           type: request.body.type,
+          bitrate: request.body.type === "voice" ? (request.body.bitrate ?? null) : null,
         })
         .returning();
 
       return reply.status(201).send(channel);
+    }
+  );
+
+  // Update a channel
+  app.patch<{ Params: { serverId: string; channelId: string }; Body: UpdateChannelRequest }>(
+    "/servers/:serverId/channels/:channelId",
+    async (request, reply) => {
+      const user = await requireAuth(request, reply);
+      if (!user) return;
+
+      const { serverId, channelId } = request.params;
+
+      const [membership] = await db
+        .select()
+        .from(memberships)
+        .where(and(eq(memberships.userId, user.id), eq(memberships.serverId, serverId)));
+
+      if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+        return reply.status(403).send({ error: "Insufficient permissions" });
+      }
+
+      const [channel] = await db.select().from(channels).where(and(eq(channels.id, channelId), eq(channels.serverId, serverId)));
+      if (!channel) return reply.status(404).send({ error: "Channel not found" });
+
+      const updates: Partial<{ name: string; bitrate: number | null }> = {};
+
+      if (request.body.name !== undefined) {
+        const error = validateChannelName(request.body.name);
+        if (error) return reply.status(400).send({ error });
+        updates.name = request.body.name.trim();
+      }
+
+      if (request.body.bitrate !== undefined) {
+        if (channel.type !== "voice") {
+          return reply.status(400).send({ error: "Bitrate can only be set on voice channels" });
+        }
+        updates.bitrate = request.body.bitrate;
+      }
+
+      const [updated] = await db
+        .update(channels)
+        .set(updates)
+        .where(eq(channels.id, channelId))
+        .returning();
+
+      return updated;
+    }
+  );
+
+  // Delete a channel
+  app.delete<{ Params: { serverId: string; channelId: string } }>(
+    "/servers/:serverId/channels/:channelId",
+    async (request, reply) => {
+      const user = await requireAuth(request, reply);
+      if (!user) return;
+
+      const { serverId, channelId } = request.params;
+
+      const [membership] = await db
+        .select()
+        .from(memberships)
+        .where(and(eq(memberships.userId, user.id), eq(memberships.serverId, serverId)));
+
+      if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+        return reply.status(403).send({ error: "Insufficient permissions" });
+      }
+
+      await db.delete(channels).where(and(eq(channels.id, channelId), eq(channels.serverId, serverId)));
+
+      return reply.status(204).send();
     }
   );
 

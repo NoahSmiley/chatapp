@@ -147,23 +147,27 @@ function AudioSettingsPanel() {
           className="settings-slider"
         />
       </div>
+    </div>
+  );
+}
 
-      <div className="audio-setting-slider-row">
-        <div className="audio-setting-slider-label">
-          <span>Bitrate</span>
-          <span className="audio-setting-value">
-            {audioSettings.bitrate / 1000} kbps
-          </span>
-        </div>
-        <input
-          type="range"
-          min="8000"
-          max="256000"
-          step="8000"
-          value={audioSettings.bitrate}
-          onChange={(e) => updateAudioSetting("bitrate", parseInt(e.target.value))}
-          className="settings-slider"
-        />
+function SpeakingAvatar({ username, audioLevel, speaking }: { username: string; audioLevel: number; speaking: boolean }) {
+  // Scale audio level (0-1) to a visual ring size
+  const intensity = speaking ? Math.min(audioLevel * 3, 1) : 0;
+  const ringScale = 1 + intensity * 0.35;
+  const ringOpacity = speaking ? 0.3 + intensity * 0.7 : 0;
+
+  return (
+    <div className="voice-avatar-wrapper">
+      <div
+        className={`voice-avatar-ring ${speaking ? "active" : ""}`}
+        style={{
+          transform: `scale(${ringScale})`,
+          opacity: ringOpacity,
+        }}
+      />
+      <div className={`voice-participant-avatar ${speaking ? "speaking" : ""}`}>
+        {username.charAt(0).toUpperCase()}
       </div>
     </div>
   );
@@ -182,6 +186,7 @@ export function VoiceChannelView() {
     isScreenSharing,
     watchingScreenShare,
     participantVolumes,
+    audioLevels,
     joinVoiceChannel,
     leaveVoiceChannel,
     toggleMute,
@@ -236,11 +241,12 @@ export function VoiceChannelView() {
                 key={user.userId}
                 className={`voice-participant ${user.speaking ? "speaking" : ""}`}
               >
-                <div className="voice-participant-avatar">
-                  {user.username.charAt(0).toUpperCase()}
-                </div>
+                <SpeakingAvatar
+                  username={user.username}
+                  audioLevel={audioLevels[user.userId] ?? 0}
+                  speaking={user.speaking}
+                />
                 <span className="voice-participant-name">{user.username}</span>
-                {user.speaking && <span className="voice-speaking-indicator" />}
                 {user.userId !== room?.localParticipant?.identity && (
                   <div className="participant-volume">
                     <input

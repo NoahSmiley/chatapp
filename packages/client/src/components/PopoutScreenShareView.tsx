@@ -55,7 +55,9 @@ export function PopoutScreenShareView() {
       setStatus("Connecting...");
 
       try {
-        const room = new Room();
+        const room = new Room({
+          adaptiveStream: false, // Don't downscale quality based on element size
+        });
         roomRef.current = room;
 
         room.on(RoomEvent.TrackSubscribed, (track) => {

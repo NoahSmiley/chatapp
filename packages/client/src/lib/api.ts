@@ -5,6 +5,7 @@ import type {
   PaginatedResponse,
   CreateServerRequest,
   CreateChannelRequest,
+  UpdateChannelRequest,
   Membership,
 } from "@flux/shared";
 
@@ -91,6 +92,19 @@ export async function createChannel(serverId: string, data: CreateChannelRequest
   return request<Channel>(`/servers/${serverId}/channels`, {
     method: "POST",
     body: JSON.stringify(data),
+  });
+}
+
+export async function updateChannel(serverId: string, channelId: string, data: UpdateChannelRequest) {
+  return request<Channel>(`/servers/${serverId}/channels/${channelId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteChannel(serverId: string, channelId: string) {
+  return request<void>(`/servers/${serverId}/channels/${channelId}`, {
+    method: "DELETE",
   });
 }
 

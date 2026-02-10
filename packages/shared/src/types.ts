@@ -30,6 +30,7 @@ export interface Channel {
   serverId: string;
   name: string;
   type: ChannelType;
+  bitrate: number | null;
   createdAt: string;
 }
 
@@ -108,6 +109,12 @@ export interface CreateServerRequest {
 export interface CreateChannelRequest {
   name: string;
   type: ChannelType;
+  bitrate?: number;
+}
+
+export interface UpdateChannelRequest {
+  name?: string;
+  bitrate?: number | null;
 }
 
 export interface JoinServerRequest {

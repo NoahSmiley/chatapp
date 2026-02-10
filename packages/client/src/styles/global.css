@@ -8,17 +8,17 @@
 }
 
 :root {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-tertiary: #0f3460;
-  --bg-input: #1e2a4a;
-  --text-primary: #e0e0e0;
-  --text-secondary: #a0a0b8;
-  --text-muted: #6a6a80;
-  --accent: #6c63ff;
-  --accent-hover: #5a52d5;
-  --danger: #e74c3c;
-  --border: #2a2a4a;
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-tertiary: #1a1a1a;
+  --bg-input: #161616;
+  --text-primary: #e8e8e8;
+  --text-secondary: #888888;
+  --text-muted: #555555;
+  --accent: #ffffff;
+  --accent-hover: #cccccc;
+  --danger: #ff4444;
+  --border: #222222;
   --radius: 8px;
   --titlebar-height: 36px;
 }
@@ -33,6 +33,17 @@ body {
   color: var(--text-primary);
   overflow: hidden;
   -webkit-app-region: no-drag;
+}
+
+/* ── Titlebar (drag region) ── */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
+  -webkit-app-region: drag;
+  z-index: 1000;
 }
 
 /* ── Auth Pages ── */
@@ -120,7 +131,7 @@ input:focus {
   width: 100%;
   padding: 12px;
   background: var(--accent);
-  color: white;
+  color: #000;
   border: none;
   border-radius: var(--radius);
   font-size: 14px;
@@ -174,6 +185,11 @@ input:focus {
   border-right: 1px solid var(--border);
 }
 
+.server-sidebar-logo {
+  color: var(--text-primary);
+  padding: 4px 0;
+}
+
 .server-icon {
   width: 48px;
   height: 48px;
@@ -194,6 +210,7 @@ input:focus {
 .server-icon.active {
   border-radius: 16px;
   background: var(--accent);
+  color: #000;
 }
 
 .server-sidebar-divider {
@@ -269,7 +286,7 @@ input:focus {
 }
 
 .channel-item.active {
-  background: rgba(108, 99, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
 
@@ -370,7 +387,7 @@ input:focus {
 .btn-send {
   padding: 0 20px;
   background: var(--accent);
-  color: white;
+  color: #000;
   border: none;
   border-radius: var(--radius);
   font-weight: 600;

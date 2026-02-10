@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useChatStore } from "../stores/chat.js";
+import { FluxLogo } from "./FluxLogo.js";
 
 export function ServerSidebar() {
   const { servers, activeServerId, selectServer, createServer, joinServer } = useChatStore();
@@ -19,6 +20,12 @@ export function ServerSidebar() {
 
   return (
     <div className="server-sidebar">
+      <div className="server-sidebar-logo" title="Flux">
+        <FluxLogo size={36} />
+      </div>
+
+      <div className="server-sidebar-divider" />
+
       {servers.map((server) => (
         <button
           key={server.id}

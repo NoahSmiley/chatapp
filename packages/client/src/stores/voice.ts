@@ -113,17 +113,30 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   },
 
   leaveVoiceChannel: () => {
-    const { room, connectedChannelId } = get();
+    const { room, connectedChannelId, channelParticipants } = get();
+    const localId = room?.localParticipant?.identity;
+
     if (room) {
       room.disconnect();
     }
     if (connectedChannelId) {
       gateway.send({ type: "voice_state_update", channelId: connectedChannelId, action: "leave" });
     }
+
+    // Optimistically remove self from sidebar participants
+    // (in case the server broadcast doesn't arrive due to WS reconnect)
+    const updatedParticipants = { ...channelParticipants };
+    if (connectedChannelId && updatedParticipants[connectedChannelId] && localId) {
+      updatedParticipants[connectedChannelId] = updatedParticipants[connectedChannelId].filter(
+        (p) => p.userId !== localId
+      );
+    }
+
     set({
       room: null,
       connectedChannelId: null,
       participants: [],
+      channelParticipants: updatedParticipants,
       isMuted: false,
       isDeafened: false,
       connecting: false,

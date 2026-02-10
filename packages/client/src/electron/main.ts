@@ -12,8 +12,8 @@ function createWindow() {
     title: "Flux",
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: "#1a1a2e",
-      symbolColor: "#e0e0e0",
+      color: "#0a0a0a",
+      symbolColor: "#e8e8e8",
       height: 36,
     },
     webPreferences: {

@@ -8,7 +8,7 @@ import { env } from "../env.js";
 
 export async function voiceRoutes(app: FastifyInstance) {
   // Generate a LiveKit token for joining a voice channel
-  app.post<{ Body: { channelId: string } }>("/voice/token", async (request, reply) => {
+  app.post<{ Body: { channelId: string; viewer?: boolean } }>("/voice/token", async (request, reply) => {
     const user = await requireAuth(request, reply);
     if (!user) return;
 
@@ -29,14 +29,15 @@ export async function voiceRoutes(app: FastifyInstance) {
 
     // Generate LiveKit access token
     // Room name = channelId (1:1 mapping; LiveKit auto-creates/destroys rooms)
+    const isViewer = request.body.viewer === true;
     const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
-      identity: user.id,
-      name: user.username,
+      identity: isViewer ? `${user.id}-viewer` : user.id,
+      name: isViewer ? `${user.username} (viewer)` : user.username,
     });
     at.addGrant({
       roomJoin: true,
       room: channelId,
-      canPublish: true,
+      canPublish: !isViewer,
       canSubscribe: true,
     });
 

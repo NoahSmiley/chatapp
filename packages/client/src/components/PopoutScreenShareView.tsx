@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Room, RoomEvent, Track } from "livekit-client";
-import { onStateUpdate, type VoiceStateMessage } from "../lib/broadcast.js";
+import { onStateUpdate, sendCommand, type VoiceStateMessage } from "../lib/broadcast.js";
 
 export function PopoutScreenShareView() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -12,6 +12,9 @@ export function PopoutScreenShareView() {
     let currentUrl: string | null = null;
     let currentToken: string | null = null;
     let currentSharerPid: string | null = null;
+
+    // Request initial state from main window
+    sendCommand({ type: "request-state" });
 
     const cleanup = onStateUpdate(async (msg) => {
       if (msg.type !== "voice-state") return;

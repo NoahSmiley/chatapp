@@ -33,6 +33,7 @@ body {
   color: var(--text-primary);
   overflow: hidden;
   -webkit-app-region: no-drag;
+  user-select: none;
 }
 
 /* ── Titlebar (drag region) ── */
@@ -360,6 +361,7 @@ input:focus {
   line-height: 1.4;
   color: var(--text-primary);
   word-break: break-word;
+  user-select: text;
 }
 
 .message-input-form {
@@ -378,6 +380,7 @@ input:focus {
   color: var(--text-primary);
   font-size: 14px;
   outline: none;
+  user-select: text;
 }
 
 .message-input:focus {
@@ -479,7 +482,6 @@ input:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   height: 100%;
   gap: 24px;
   overflow-y: auto;
@@ -514,6 +516,7 @@ input:focus {
   align-items: center;
   gap: 16px;
   color: var(--text-secondary);
+  margin: auto 0;
 }
 
 .voice-join-btn {
@@ -527,6 +530,7 @@ input:focus {
   align-items: center;
   gap: 12px;
   color: var(--text-secondary);
+  margin: auto 0;
 }
 
 /* ── Voice Participants List ── */
@@ -608,6 +612,7 @@ input:focus {
 .voice-control-btn.active {
   background: var(--accent);
   border-color: var(--accent);
+  color: var(--bg-primary);
 }
 
 .voice-control-btn.disconnect {

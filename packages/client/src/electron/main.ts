@@ -5,7 +5,8 @@ const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 
 // Pending screen share callback from setDisplayMediaRequestHandler
-let pendingScreenShareCallback: ((result: { video?: unknown }) => void) | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pendingScreenShareCallback: ((result: any) => void) | null = null;
 
 // Pop-out windows
 const popoutWindows = new Map<string, BrowserWindow>();
@@ -32,6 +33,8 @@ function createWindow() {
 
   // Screen sharing: show picker instead of auto-granting
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const deny = () => (callback as any)(null);
     try {
       const sources = await desktopCapturer.getSources({
         types: ["screen", "window"],
@@ -39,7 +42,7 @@ function createWindow() {
       });
 
       if (sources.length === 0) {
-        callback({});
+        deny();
         return;
       }
 
@@ -50,10 +53,10 @@ function createWindow() {
         appIcon: s.appIcon?.toDataURL() ?? null,
       }));
 
-      pendingScreenShareCallback = callback as (result: { video?: unknown }) => void;
+      pendingScreenShareCallback = callback as any;
       mainWindow?.webContents.send("screen-share-sources", sourceList);
     } catch {
-      callback({});
+      deny();
     }
   });
 
@@ -76,14 +79,14 @@ ipcMain.on("screen-share-select", (_event, sourceId: string) => {
     if (selected) {
       cb({ video: selected });
     } else {
-      cb({});
+      cb(null);
     }
   });
 });
 
 ipcMain.on("screen-share-cancel", () => {
   if (pendingScreenShareCallback) {
-    pendingScreenShareCallback({});
+    pendingScreenShareCallback(null);
     pendingScreenShareCallback = null;
   }
 });

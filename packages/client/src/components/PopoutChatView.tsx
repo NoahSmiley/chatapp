@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import type { Message } from "@flux/shared";
-import { onStateUpdate, sendCommand, type ChatStateMessage } from "../lib/broadcast.js";
+import { onStateUpdate, sendCommand, type ChatStateMessage, type StateMessage } from "../lib/broadcast.js";
 
 export function PopoutChatView() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -9,13 +9,16 @@ export function PopoutChatView() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const cleanup = onStateUpdate((msg) => {
+    const handleState = (msg: StateMessage) => {
       if (msg.type === "chat-state") {
         const chatMsg = msg as ChatStateMessage;
         setMessages(chatMsg.messages);
         setChannelName(chatMsg.channelName);
       }
-    });
+    };
+    const cleanup = onStateUpdate(handleState);
+    // Request initial state from main window
+    sendCommand({ type: "request-state" });
     return cleanup;
   }, []);
 

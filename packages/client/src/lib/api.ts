@@ -103,9 +103,9 @@ export async function getMessages(channelId: string, cursor?: string) {
 
 // ── Voice ──
 
-export async function getVoiceToken(channelId: string) {
+export async function getVoiceToken(channelId: string, viewer?: boolean) {
   return request<{ token: string; url: string }>("/voice/token", {
     method: "POST",
-    body: JSON.stringify({ channelId }),
+    body: JSON.stringify({ channelId, ...(viewer ? { viewer: true } : {}) }),
   });
 }

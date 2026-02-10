@@ -3,7 +3,7 @@ import { Room, RoomEvent, Track } from "livekit-client";
 import type { VoiceParticipant } from "@flux/shared";
 import * as api from "../lib/api.js";
 import { gateway } from "../lib/ws.js";
-import { broadcastState, isPopout } from "../lib/broadcast.js";
+import { broadcastState, onCommand, isPopout } from "../lib/broadcast.js";
 
 // ── Sound Effects ──
 
@@ -318,6 +318,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       });
 
       get()._updateParticipants();
+      get()._updateScreenSharers();
 
       playJoinSound();
 
@@ -633,14 +634,29 @@ gateway.on((event) => {
 let lastLivekitUrl: string | null = null;
 let lastLivekitToken: string | null = null;
 
+function broadcastVoiceState() {
+  const state = useVoiceStore.getState();
+  const watchedSharer = state.screenSharers.find(
+    (s) => s.participantId === state.watchingScreenShare,
+  );
+  broadcastState({
+    type: "voice-state",
+    livekitUrl: state.connectedChannelId ? lastLivekitUrl : null,
+    livekitToken: state.connectedChannelId ? lastLivekitToken : null,
+    watchingScreenShare: state.watchingScreenShare,
+    screenSharerParticipantId: watchedSharer?.participantId ?? null,
+    screenSharerUsername: watchedSharer?.username ?? null,
+  });
+}
+
 if (!isPopout()) {
-  // Store LiveKit connection info when joining
+  // Store LiveKit connection info when joining (viewer token for popout use)
   const origJoin = useVoiceStore.getState().joinVoiceChannel;
   const wrappedJoin = async (channelId: string) => {
     await origJoin(channelId);
-    // After joining, fetch a fresh token for popout use
+    // Fetch a viewer token for popout windows (different identity so it won't kick main)
     try {
-      const { token, url } = await api.getVoiceToken(channelId);
+      const { token, url } = await api.getVoiceToken(channelId, true);
       lastLivekitUrl = url;
       lastLivekitToken = token;
     } catch {
@@ -650,17 +666,12 @@ if (!isPopout()) {
   useVoiceStore.setState({ joinVoiceChannel: wrappedJoin });
 
   // Broadcast voice state on changes
-  useVoiceStore.subscribe((state) => {
-    const watchedSharer = state.screenSharers.find(
-      (s) => s.participantId === state.watchingScreenShare,
-    );
-    broadcastState({
-      type: "voice-state",
-      livekitUrl: state.connectedChannelId ? lastLivekitUrl : null,
-      livekitToken: state.connectedChannelId ? lastLivekitToken : null,
-      watchingScreenShare: state.watchingScreenShare,
-      screenSharerParticipantId: watchedSharer?.participantId ?? null,
-      screenSharerUsername: watchedSharer?.username ?? null,
-    });
+  useVoiceStore.subscribe(() => broadcastVoiceState());
+
+  // Respond to request-state from popout windows
+  onCommand((cmd) => {
+    if (cmd.type === "request-state") {
+      broadcastVoiceState();
+    }
   });
 }

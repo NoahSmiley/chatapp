@@ -162,5 +162,15 @@ if (!isPopout()) {
     if (cmd.type === "send-message") {
       useChatStore.getState().sendMessage(cmd.content);
     }
+    if (cmd.type === "request-state") {
+      const state = useChatStore.getState();
+      const channel = state.channels.find((c) => c.id === state.activeChannelId);
+      broadcastState({
+        type: "chat-state",
+        messages: state.messages,
+        activeChannelId: state.activeChannelId,
+        channelName: channel?.name ?? null,
+      });
+    }
   });
 }

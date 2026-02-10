@@ -36,7 +36,11 @@ export interface StopWatchingCommand {
   type: "stop-watching";
 }
 
-export type CommandMessage = SendMessageCommand | WatchScreenShareCommand | StopWatchingCommand;
+export interface RequestStateCommand {
+  type: "request-state";
+}
+
+export type CommandMessage = SendMessageCommand | WatchScreenShareCommand | StopWatchingCommand | RequestStateCommand;
 
 // ── Channels ──
 
